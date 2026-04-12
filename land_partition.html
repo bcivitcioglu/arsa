@@ -303,7 +303,16 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
     </div>
     <!-- Villa Style Picker — per floor -->
     <div id="villaStylePicker">
-      <div class="vs-label">2. Kat</div>
+      <div class="vs-label">Çatı Terası</div>
+      <div class="vs-grid" data-floor="roof">
+        <button class="vs-btn active" data-style="beton" title="Beton"><div class="vs-swatch" style="background:#D8D0C8"></div>Beton</button>
+        <button class="vs-btn" data-style="ahsapdeck" title="Ahsap Deck"><div class="vs-swatch" style="background:repeating-linear-gradient(0deg,#A0724A 0 4px,#6B4226 4px 5px)"></div>Ahsap</button>
+        <button class="vs-btn" data-style="tastash" title="Tas Döşeme"><div class="vs-swatch" style="background:repeating-linear-gradient(45deg,#C8BDA8 0 6px,#B0A590 6px 7px)"></div>Taş</button>
+        <button class="vs-btn" data-style="koyutash" title="Koyu Taş"><div class="vs-swatch" style="background:#3A3634"></div>Koyu</button>
+        <button class="vs-btn" data-style="beyaztash" title="Beyaz"><div class="vs-swatch" style="background:#F0EAD6"></div>Beyaz</button>
+        <button class="vs-btn" data-style="terracotta" title="Terracotta"><div class="vs-swatch" style="background:#C4785A"></div>Kiremit</button>
+      </div>
+      <div class="vs-label" style="margin-top:8px">2. Kat</div>
       <div class="vs-grid" data-floor="f2">
         <button class="vs-btn active" data-style="modern" title="Modern"><div class="vs-swatch" style="background:linear-gradient(135deg,#EAE2DA 50%,#B07840 50%)"></div>Modern</button>
         <button class="vs-btn" data-style="stone" title="Tas"><div class="vs-swatch" style="background:linear-gradient(to bottom,#F5F2EC 0 50%,#8A8880 50% 100%)"></div>Tas</button>
@@ -1017,14 +1026,11 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
     return new THREE.MeshStandardMaterial(props);
   }
   var matConcrete=makeWallMat(vsF1);
-  // Floor 2 wall: if F1 style defines wallFloor2 override AND F2 style is same as F1, respect the override (for Tas gray+white combo); otherwise use F2 style's wall
-  var matConcreteF2;
-  if(STATE.villaStyleF1===STATE.villaStyleF2&&vsF1.wallFloor2){
-    matConcreteF2=new THREE.MeshStandardMaterial({color:vsF1.wallFloor2,roughness:0.85,metalness:0.02});
-  }else{
-    matConcreteF2=makeWallMat(vsF2);
-  }
+  var matConcreteF2=makeWallMat(vsF2);
   var matConcreteSlab=new THREE.MeshStandardMaterial({color:vs.slab,roughness:0.8,metalness:0.03});
+  // Roof terrace surface — user-selectable
+  var roofCfg=ROOF_STYLES[STATE.villaStyleRoof]||ROOF_STYLES.beton;
+  var matRoofSlab=new THREE.MeshStandardMaterial({color:roofCfg.color,roughness:roofCfg.roughness,metalness:roofCfg.metalness});
   var matWood=new THREE.MeshStandardMaterial({color:vs.wood,roughness:0.65});
   var matWoodDark=new THREE.MeshStandardMaterial({color:vs.woodDark,roughness:0.6});
   // Dark windows — permanent panjur (rolling shutter) look
@@ -1199,7 +1205,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
   // Floor 2 walls + slabs (use f2poly for cantilever effect; mid-slab creates visible overhang ceiling)
   mvPolySlab(f2poly,F1,SLAB2,matConcreteSlab);
   mvExtrudePoly(f2poly,f2base,F2,matConcreteF2);
-  mvPolySlab(f2poly,f2base+F2,SLAB2,matConcreteSlab);
+  mvPolySlab(f2poly,f2base+F2,SLAB2,matRoofSlab);
 
   // Floor 1 facade: glass, mullions, front door (uses poly2D edges)
   for(ei=0;ei<n;ei++){var e=edges[ei];if(e.len<2)continue;var faceAngle=Math.atan2(e.nx,-e.ny);var isFront=(ei===longIdx);
@@ -1300,12 +1306,15 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
       vRaf.rotation.x=vSlope;
       g.add(vRaf);
     }
-    // 2 wooden support columns at far end corners
+    // 2 wooden support columns at far end corners — extend down to ground (past subasman)
+    var SUBASMAN_H=1.0;
     for(var vcs=-1;vcs<=1;vcs+=2){
       var vColCx=vmx+ge.nx*VER_DEPTH+vcs*(VER_W/2)*ge.ux;
       var vColCy=vmy+ge.ny*VER_DEPTH+vcs*(VER_W/2)*ge.uy;
-      var vCol=new THREE.Mesh(new THREE.BoxGeometry(COL_W,VER_H_FAR,COL_W),matWoodDark);
-      vCol.position.set(vColCx,VER_H_FAR/2,-vColCy);
+      var vColH=VER_H_FAR+SUBASMAN_H;
+      var vColCY=(VER_H_FAR-SUBASMAN_H)/2;
+      var vCol=new THREE.Mesh(new THREE.BoxGeometry(COL_W,vColH,COL_W),matWoodDark);
+      vCol.position.set(vColCx,vColCY,-vColCy);
       vCol.rotation.y=vEdgeAngle;
       vCol.castShadow=true;
       g.add(vCol);
@@ -1318,6 +1327,32 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
     vBeam.rotation.y=vEdgeAngle;
     g.add(vBeam);
   }
+
+  // === SUBASMAN (plinth) + ENTRANCE STEPS ===
+  // 1m raised base, color matches roof terrace style. Shift the whole group up by SUBASMAN at the end.
+  var SUB_H=1.0;
+  // Subasman slab: extrude the same villa footprint, from local Y=-SUB_H to Y=0
+  mvPolySlab(poly2D,-SUB_H,SUB_H,matRoofSlab);
+  // Entrance steps: 6 steps, ~16.7cm rise, 30cm tread, 2m wide, in front of the door (longIdx edge, t=0.1)
+  var STEPS_N=6, STEP_RISE=SUB_H/STEPS_N, STEP_TREAD=0.30, STAIR_W=2.0;
+  var stDoorEdge=edges[longIdx], stDoorT=0.1;
+  var stDoorCx=stDoorEdge.ax+stDoorT*stDoorEdge.dx;
+  var stDoorCy=stDoorEdge.ay+stDoorT*stDoorEdge.dy;
+  var stEdgeAngle=stDoorEdge.angle;
+  for(var si2=0;si2<STEPS_N;si2++){
+    var stepH=(si2+1)*STEP_RISE;
+    var stepCY=-SUB_H+stepH/2; // local coords, centered vertically
+    var outDist=(STEPS_N-si2-0.5)*STEP_TREAD;
+    var stX=stDoorCx+outDist*stDoorEdge.nx;
+    var stY=stDoorCy+outDist*stDoorEdge.ny;
+    var stepMesh=new THREE.Mesh(new THREE.BoxGeometry(STAIR_W,stepH,STEP_TREAD),matRoofSlab);
+    stepMesh.position.set(stX,stepCY,-stY);
+    stepMesh.rotation.y=stEdgeAngle;
+    stepMesh.castShadow=true;stepMesh.receiveShadow=true;
+    g.add(stepMesh);
+  }
+  // Lift the entire villa group up by SUBASMAN so it sits on the plinth
+  g.position.y=SUB_H;
 
   return g;
 }
@@ -1850,7 +1885,7 @@ function makeStoneWallTexture(variant){
 // Villa style definitions
 const VILLA_STYLES={
   modern:{wall:0xEAE2DA,slab:0xD8D0C8,wood:0xB07840,woodDark:0x8B5A2B,glass:0x88BBDD,glassLit:0xFFF8E8,glassEmit:0xFFE0A0,railing:0x222222,frame:0x1A1A1A,door:0x6B4226},
-  stone:{wall:0xFFFFFF,wallFloor2:0xF5F2EC,slab:0xE0DCD0,wood:0x8B6F4E,woodDark:0x6B4226,glass:0x99BBCC,glassLit:0xFFF0E0,glassEmit:0xFFD8A0,railing:0x333333,frame:0x2A2A2A,door:0x5A4A3A,grayStoneTexture:true},
+  stone:{wall:0xFFFFFF,slab:0xE0DCD0,wood:0x8B6F4E,woodDark:0x6B4226,glass:0x99BBCC,glassLit:0xFFF0E0,glassEmit:0xFFD8A0,railing:0x333333,frame:0x2A2A2A,door:0x5A4A3A,grayStoneTexture:true},
   wood:{wall:0xFFFFFF,slab:0x906A42,wood:0x8B5A2B,woodDark:0x6B4226,glass:0x88BBDD,glassLit:0xFFF8E8,glassEmit:0xFFE0A0,railing:0x1A1A1A,frame:0x1A1A1A,door:0x5D4037,woodCladdingTexture:true,woodVariant:'narrow'},
   woodwide:{wall:0xFFFFFF,slab:0x906A42,wood:0x8B5A2B,woodDark:0x6B4226,glass:0x88BBDD,glassLit:0xFFF8E8,glassEmit:0xFFE0A0,railing:0x1A1A1A,frame:0x1A1A1A,door:0x5D4037,woodCladdingTexture:true,woodVariant:'wide'},
   white:{wall:0xF5F5F5,slab:0xE8E8E8,wood:0xC0A070,woodDark:0xA08050,glass:0x88CCEE,glassLit:0xFFFAF0,glassEmit:0xFFE8C0,railing:0x333333,frame:0x222222,door:0x8B6914},
@@ -1864,15 +1899,27 @@ const VILLA_STYLES={
 STATE.villaStyle='modern'; // kept for back-compat
 STATE.villaStyleF1='modern';
 STATE.villaStyleF2='modern';
+STATE.villaStyleRoof='beton';
+
+// Roof terrace surface styles
+const ROOF_STYLES={
+  beton:{color:0xD8D0C8,roughness:0.8,metalness:0.03},
+  ahsapdeck:{color:0xA0724A,roughness:0.75,metalness:0.0},
+  tastash:{color:0xC8BDA8,roughness:0.9,metalness:0.02},
+  koyutash:{color:0x3A3634,roughness:0.75,metalness:0.08},
+  beyaztash:{color:0xF0EAD6,roughness:0.85,metalness:0.02},
+  terracotta:{color:0xC4785A,roughness:0.85,metalness:0.02}
+};
 
 document.querySelectorAll('#villaStylePicker .vs-grid').forEach(function(grid){
-  const floor=grid.dataset.floor; // 'f1' or 'f2'
+  const floor=grid.dataset.floor; // 'f1', 'f2', or 'roof'
   grid.querySelectorAll('.vs-btn').forEach(function(btn){
     btn.addEventListener('click',function(){
       grid.querySelectorAll('.vs-btn').forEach(function(b){b.classList.remove('active')});
       this.classList.add('active');
       if(floor==='f1')STATE.villaStyleF1=this.dataset.style;
-      else STATE.villaStyleF2=this.dataset.style;
+      else if(floor==='f2')STATE.villaStyleF2=this.dataset.style;
+      else if(floor==='roof')STATE.villaStyleRoof=this.dataset.style;
       if(STATE.view==='3d'&&threeInited)buildVillas3D();
     });
   });

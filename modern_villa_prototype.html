@@ -414,6 +414,10 @@ const D=10; // depth (along Z)
 const F1=3.2; // floor 1 height
 const F2=3.0; // floor 2 height
 const SLAB=0.22; // slab thickness
+const SUBASMAN=1.0; // plinth height (raises ground floor 1m above natural ground)
+
+// Subasman material — darker stone-like base (contrasts with wall material above)
+const matSubasman=new THREE.MeshStandardMaterial({color:0x5A554E,roughness:0.92,metalness:0.02});
 
 // --- Helper ---
 function box(w,h,d,x,y,z,mat,castS,recvS){
@@ -618,6 +622,39 @@ villa.add(box(0.1,0.12,pergDp+0.1, pergX-pergW*0.42,pergBase+pergH-0.06,pergZ, m
 villa.add(box(0.1,0.12,pergDp+0.1, pergX+pergW*0.42,pergBase+pergH-0.06,pergZ, matWoodDark,false,false));
 
 
+// === SUBASMAN (plinth) — 1m raised stone base ===
+// Positioned at ground level, slightly wider than the villa footprint for the classic plinth look
+const subasmanGeo=new THREE.BoxGeometry(W+0.3,SUBASMAN,D+0.3);
+const subasman=new THREE.Mesh(subasmanGeo,matSubasman);
+subasman.position.set(0,SUBASMAN/2,0);
+subasman.castShadow=true;subasman.receiveShadow=true;
+scene.add(subasman);
+
+// === ENTRANCE STEPS — 6 steps to climb the 1m subasman ===
+// Standard: ~16.67cm rise, 30cm tread, 2m wide. Centered in front of the door.
+const STEPS=6;
+const RISE=SUBASMAN/STEPS;       // 0.1667m (16.67cm)
+const TREAD=0.30;                 // 30cm tread depth
+const STAIR_W=2.0;                // 2m wide
+const DOOR_X=-W*0.18;             // matches the front door x-position
+for(let s=0;s<STEPS;s++){
+  // Step s: top surface at height (s+1)*RISE, tread occupies Z range (STEPS-s-1)*TREAD to (STEPS-s)*TREAD from villa wall
+  const stepH=(s+1)*RISE;          // cumulative height of this step box (from ground up to its top)
+  const stepY=stepH/2;             // center
+  const zOuter=D/2+(STEPS-s)*TREAD;
+  const zInner=zOuter-TREAD;
+  const zCenter=(zOuter+zInner)/2;
+  const step=new THREE.Mesh(
+    new THREE.BoxGeometry(STAIR_W,stepH,TREAD),
+    matSubasman
+  );
+  step.position.set(DOOR_X,stepY,zCenter);
+  step.castShadow=true;step.receiveShadow=true;
+  scene.add(step);
+}
+
+// Lift the villa up by SUBASMAN so it sits on top of the plinth
+villa.position.y=SUBASMAN;
 scene.add(villa);
 
 // --- Animate ---
