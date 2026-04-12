@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Modern Villa Prototype</title>
+<style>
+  body{margin:0;overflow:hidden;background:#1a1a2e;font-family:sans-serif}
+  canvas{display:block}
+  #info{position:absolute;top:10px;left:10px;color:#fff;background:rgba(0,0,0,0.6);padding:10px 16px;border-radius:8px;font-size:13px}
+</style>
+</head>
+<body>
+<div id="info">Modern Villa Prototype — drag to orbit, scroll to zoom</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+THREE.OrbitControls=function(cam,el){
+  var self=this;self.enabled=true;
+  self.camera=cam;self.domElement=el;self.target=new THREE.Vector3();
+  self.enableDamping=false;self.dampingFactor=0.05;self.maxPolarAngle=Math.PI;
+  self.minDistance=1;self.maxDistance=500;
+  var sph=new THREE.Spherical(),sphD=new THREE.Spherical();
+  var sc=1,panOff=new THREE.Vector3();
+  var rS=new THREE.Vector2(),rE=new THREE.Vector2(),rD=new THREE.Vector2();
+  var pS=new THREE.Vector2(),pE=new THREE.Vector2(),pD=new THREE.Vector2();
+  var st=0;var off=new THREE.Vector3();
+  var q=new THREE.Quaternion().setFromUnitVectors(cam.up,new THREE.Vector3(0,1,0));
+  var qI=q.clone().invert();
+  self.update=function(){
+    if(!self.enabled)return;
+    off.copy(cam.position).sub(self.target).applyQuaternion(q);
+    sph.setFromVector3(off);sph.theta+=sphD.theta;sph.phi+=sphD.phi;
+    sph.phi=Math.max(0.01,Math.min(self.maxPolarAngle,sph.phi));
+    sph.radius*=sc;sph.radius=Math.max(self.minDistance,Math.min(self.maxDistance,sph.radius));
+    self.target.add(panOff);off.setFromSpherical(sph).applyQuaternion(qI);
+    cam.position.copy(self.target).add(off);cam.lookAt(self.target);
+    if(self.enableDamping){sphD.theta*=(1-self.dampingFactor);sphD.phi*=(1-self.dampingFactor);panOff.multiplyScalar(1-self.dampingFactor)}
+    else{sphD.set(0,0,0);panOff.set(0,0,0)}
+    sc=1;
+  };
+  function doPan(dx,dy){
+    var v=new THREE.Vector3();var d=new THREE.Vector3().copy(cam.position).sub(self.target).length();
+    var tD=d*Math.tan(cam.fov/2*Math.PI/180)*2;
+    v.setFromMatrixColumn(cam.matrix,0);v.multiplyScalar(-dx/el.clientHeight*tD);panOff.add(v);
+    v.setFromMatrixColumn(cam.matrix,1);v.multiplyScalar(dy/el.clientHeight*tD);panOff.add(v);
+  }
+  el.addEventListener('pointerdown',function(e){if(!self.enabled)return;if(e.button===0){st=1;rS.set(e.clientX,e.clientY)}else if(e.button===2){st=2;pS.set(e.clientX,e.clientY)}el.setPointerCapture(e.pointerId)});
+  el.addEventListener('pointermove',function(e){if(!self.enabled)return;if(st===1){rE.set(e.clientX,e.clientY);rD.subVectors(rE,rS);sphD.theta-=2*Math.PI*rD.x/el.clientHeight;sphD.phi-=2*Math.PI*rD.y/el.clientHeight;rS.copy(rE)}else if(st===2){pE.set(e.clientX,e.clientY);pD.subVectors(pE,pS);doPan(pD.x,pD.y);pS.copy(pE)}});
+  el.addEventListener('pointerup',function(e){st=0;el.releasePointerCapture(e.pointerId)});
+  el.addEventListener('wheel',function(e){if(!self.enabled)return;e.preventDefault();sc*=e.deltaY>0?1.05:0.95},{passive:false});
+  el.addEventListener('contextmenu',function(e){e.preventDefault()});
+};
+</script>
+<script>
+// --- Scene setup ---
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87CEEB);
+scene.fog=new THREE.Fog(0x87CEEB,80,200);
+
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.1,500);
+camera.position.set(25,18,25);
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.1;
+document.body.appendChild(renderer.domElement);
+
+const controls=new THREE.OrbitControls(camera,renderer.domElement);
+controls.target.set(0,4,0);
+controls.enableDamping=true;
+controls.dampingFactor=0.08;
+controls.minDistance=8;
+controls.maxDistance=60;
+
+// --- Lighting ---
+const ambLight=new THREE.AmbientLight(0x404050,0.5);
+scene.add(ambLight);
+
+const hemiLight=new THREE.HemisphereLight(0x87CEEB,0x8BC34A,0.4);
+scene.add(hemiLight);
+
+const sun=new THREE.DirectionalLight(0xFFF5E0,1.4);
+sun.position.set(20,30,-15);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=-25;sun.shadow.camera.right=25;
+sun.shadow.camera.top=25;sun.shadow.camera.bottom=-25;
+sun.shadow.camera.near=0.5;sun.shadow.camera.far=80;
+sun.shadow.bias=-0.001;
+scene.add(sun);
+
+// Subtle fill light from opposite side
+const fill=new THREE.DirectionalLight(0xB0C4DE,0.3);
+fill.position.set(-15,10,20);
+scene.add(fill);
+
+// --- Ground (neutral flat surface for shadow catching) ---
+const groundGeo=new THREE.PlaneGeometry(100,100);
+const groundMat=new THREE.MeshStandardMaterial({color:0xD0CCC4,roughness:0.95});
+const ground=new THREE.Mesh(groundGeo,groundMat);
+ground.rotation.x=-Math.PI/2;
+ground.receiveShadow=true;
+scene.add(ground);
+
+// --- Procedural Turkish/Mediterranean stone wall texture ---
+// Irregular rubble masonry (moloz taş) — stones in horizontal courses with varied widths
+function makeStoneWallTexture(){
+  const c=document.createElement('canvas');
+  c.width=512;c.height=512;
+  const ctx=c.getContext('2d');
+  // Mortar background (light cream)
+  ctx.fillStyle='#E8DFC8';
+  ctx.fillRect(0,0,512,512);
+
+  // Warm Mediterranean stone palette — honey, tan, beige, cream, light gray-brown
+  const stonePalette=[
+    '#D4B894','#C9A978','#E0C9A0','#B89668','#D8BF96',
+    '#C5A585','#E8D5B0','#B99775','#CAAE85','#D9C3A0',
+    '#A88862','#BEA17C','#D6BD9B','#CBB28A','#B0916D'
+  ];
+
+  // Build horizontal courses of varying heights
+  let y=0;
+  while(y<512){
+    const courseH=12+Math.random()*22; // course height varies
+    let x=0;
+    while(x<512){
+      const stoneW=20+Math.random()*60; // stone width varies
+      const stone=stonePalette[Math.floor(Math.random()*stonePalette.length)];
+      // Draw stone with slight jitter for natural look
+      const jx=Math.random()*2-1, jy=Math.random()*2-1;
+      const mortarGap=1.5+Math.random()*1;
+      ctx.fillStyle=stone;
+      ctx.fillRect(x+mortarGap+jx, y+mortarGap+jy,
+                   stoneW-mortarGap*2, courseH-mortarGap*2);
+      // Subtle inner shading for depth (darker edge on one side)
+      ctx.fillStyle='rgba(0,0,0,0.08)';
+      ctx.fillRect(x+mortarGap+jx, y+courseH-mortarGap*2-2+jy,
+                   stoneW-mortarGap*2, 2);
+      // Subtle highlight
+      ctx.fillStyle='rgba(255,255,255,0.1)';
+      ctx.fillRect(x+mortarGap+jx, y+mortarGap+jy,
+                   stoneW-mortarGap*2, 1.5);
+      // Occasional darker speckle (weathering)
+      if(Math.random()<0.3){
+        ctx.fillStyle='rgba(80,60,40,0.15)';
+        const sx=x+mortarGap+Math.random()*(stoneW-mortarGap*2);
+        const sy=y+mortarGap+Math.random()*(courseH-mortarGap*2);
+        ctx.fillRect(sx,sy,2+Math.random()*3,1+Math.random()*2);
+      }
+      x+=stoneW;
+    }
+    y+=courseH;
+  }
+  // Overall soft noise for weathering
+  const imgData=ctx.getImageData(0,0,512,512);
+  for(let i=0;i<imgData.data.length;i+=4){
+    const n=(Math.random()-0.5)*15;
+    imgData.data[i]=Math.max(0,Math.min(255,imgData.data[i]+n));
+    imgData.data[i+1]=Math.max(0,Math.min(255,imgData.data[i+1]+n));
+    imgData.data[i+2]=Math.max(0,Math.min(255,imgData.data[i+2]+n));
+  }
+  ctx.putImageData(imgData,0,0);
+
+  const tex=new THREE.CanvasTexture(c);
+  tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+  tex.repeat.set(2,2);
+  return tex;
+}
+
+// --- Procedural irregular gray fieldstone texture (Anatolian drystone) ---
+// No horizontal courses — stones placed irregularly like a jigsaw
+function makeGrayStoneTexture(){
+  const c=document.createElement('canvas');
+  c.width=512;c.height=512;
+  const ctx=c.getContext('2d');
+  // Mortar background — dark gray
+  ctx.fillStyle='#5A5651';
+  ctx.fillRect(0,0,512,512);
+
+  // Gray stone palette — cool & warm grays, mossy greens, brownish grays
+  const stonePalette=[
+    '#8A8880','#9A958C','#A8A39A','#767068','#858078',
+    '#948E84','#787268','#6E6860','#A09A90','#8E8880',
+    '#726860','#B0A89E','#807870','#968E84','#887F76',
+    '#6A6458','#9C968C','#827C72','#74706A','#8C8680'
+  ];
+
+  // Place irregular stones (quadrilaterals) by placing seeds and drawing irregular polygons
+  // Use a grid-jittered seed pattern, then draw varied polygon stones at each seed
+  const stones=[];
+  const cols=10+Math.floor(Math.random()*3);
+  const rows=10+Math.floor(Math.random()*3);
+  const cellW=512/cols, cellH=512/rows;
+  for(let r=0;r<rows;r++){
+    for(let co=0;co<cols;co++){
+      const cx=(co+0.5)*cellW+(Math.random()-0.5)*cellW*0.7;
+      const cy=(r+0.5)*cellH+(Math.random()-0.5)*cellH*0.7;
+      stones.push({cx,cy,color:stonePalette[Math.floor(Math.random()*stonePalette.length)]});
+    }
+  }
+
+  // Draw each stone as an irregular 5-7 sided polygon around its center
+  stones.forEach(function(s){
+    const sides=5+Math.floor(Math.random()*3);
+    const rBase=cellW*0.4+Math.random()*cellW*0.3;
+    const pts=[];
+    for(let i=0;i<sides;i++){
+      const a=(i/sides)*Math.PI*2+Math.random()*0.4;
+      const r=rBase*(0.75+Math.random()*0.5);
+      pts.push([s.cx+Math.cos(a)*r, s.cy+Math.sin(a)*r]);
+    }
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0],pts[0][1]);
+    for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);
+    ctx.closePath();
+    ctx.fillStyle=s.color;
+    ctx.fill();
+
+    // Subtle shading — dark edge on bottom-right side
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle='rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    ctx.moveTo(s.cx-rBase,s.cy+rBase*0.3);
+    ctx.lineTo(s.cx+rBase*1.5,s.cy+rBase*1.5);
+    ctx.lineTo(s.cx+rBase*1.5,s.cy-rBase*1.5);
+    ctx.closePath();
+    ctx.fill();
+    // Highlight on top-left
+    ctx.fillStyle='rgba(255,255,255,0.12)';
+    ctx.beginPath();
+    ctx.moveTo(s.cx-rBase*1.5,s.cy-rBase*1.5);
+    ctx.lineTo(s.cx+rBase*0.3,s.cy-rBase*1.2);
+    ctx.lineTo(s.cx-rBase*1.2,s.cy+rBase*0.3);
+    ctx.closePath();
+    ctx.fill();
+    // Weathering speckles
+    for(let i=0;i<4;i++){
+      if(Math.random()<0.5){
+        ctx.fillStyle='rgba(30,25,20,0.3)';
+        ctx.fillRect(s.cx+(Math.random()-0.5)*rBase*1.5,
+                     s.cy+(Math.random()-0.5)*rBase*1.5,
+                     1+Math.random()*2, 1+Math.random()*2);
+      }
+    }
+    ctx.restore();
+  });
+
+  // Overall noise for weathering
+  const imgData=ctx.getImageData(0,0,512,512);
+  for(let i=0;i<imgData.data.length;i+=4){
+    const n=(Math.random()-0.5)*18;
+    imgData.data[i]=Math.max(0,Math.min(255,imgData.data[i]+n));
+    imgData.data[i+1]=Math.max(0,Math.min(255,imgData.data[i+1]+n));
+    imgData.data[i+2]=Math.max(0,Math.min(255,imgData.data[i+2]+n));
+  }
+  ctx.putImageData(imgData,0,0);
+
+  const tex=new THREE.CanvasTexture(c);
+  tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+  tex.repeat.set(2,2);
+  return tex;
+}
+
+// --- Procedural vertical wood cladding texture (modern batten/slat look) ---
+function makeWoodCladdingTexture(){
+  const c=document.createElement('canvas');
+  c.width=512;c.height=512;
+  const ctx=c.getContext('2d');
+  // Dark gap color (shadow between planks)
+  ctx.fillStyle='#2A1A10';
+  ctx.fillRect(0,0,512,512);
+
+  // Warm wood palette — cedar, teak, walnut variations
+  const woodPalette=[
+    '#A0724A','#8B5A2B','#B07840','#966540','#9A6838',
+    '#A87248','#8E5E36','#B08050','#9F6F44','#A67A4E',
+    '#8A5528','#AB7A4D','#946A3D','#A0704A','#9B6940'
+  ];
+
+  // Vertical planks — varying widths
+  const plankWidth=22; // base plank width
+  let x=0;
+  while(x<512){
+    const w=plankWidth+Math.random()*10-5; // slight variation
+    const gap=1.5+Math.random()*1; // shadow gap
+    const baseColor=woodPalette[Math.floor(Math.random()*woodPalette.length)];
+    // Draw plank
+    ctx.fillStyle=baseColor;
+    ctx.fillRect(x+gap,0,w-gap*2,512);
+
+    // Wood grain — subtle vertical streaks along the plank
+    for(let g=0;g<6;g++){
+      const gx=x+gap+Math.random()*(w-gap*2);
+      const opacity=0.05+Math.random()*0.12;
+      ctx.fillStyle='rgba(40,20,10,'+opacity+')';
+      ctx.fillRect(gx,0,0.5+Math.random()*1.2,512);
+    }
+    // Lighter highlight streaks
+    for(let g=0;g<3;g++){
+      const gx=x+gap+Math.random()*(w-gap*2);
+      const opacity=0.04+Math.random()*0.08;
+      ctx.fillStyle='rgba(255,220,180,'+opacity+')';
+      ctx.fillRect(gx,0,0.4+Math.random()*0.8,512);
+    }
+    // Horizontal knots / wood grain rings (occasional)
+    if(Math.random()<0.4){
+      const ky=Math.random()*512;
+      const kw=w-gap*2;
+      ctx.fillStyle='rgba(40,20,10,0.25)';
+      ctx.beginPath();
+      ctx.ellipse(x+w/2,ky,kw*0.15,2+Math.random()*2,0,0,Math.PI*2);
+      ctx.fill();
+    }
+    // Occasional darker/lighter horizontal variation bands
+    for(let b=0;b<3;b++){
+      const by=Math.random()*512;
+      const bh=20+Math.random()*60;
+      ctx.fillStyle='rgba(30,15,5,'+(0.03+Math.random()*0.05)+')';
+      ctx.fillRect(x+gap,by,w-gap*2,bh);
+    }
+    // Subtle edge shadow on the right side of plank (depth)
+    ctx.fillStyle='rgba(0,0,0,0.18)';
+    ctx.fillRect(x+w-gap-1.5,0,1.5,512);
+    // Subtle edge highlight on left side
+    ctx.fillStyle='rgba(255,230,190,0.08)';
+    ctx.fillRect(x+gap,0,1,512);
+
+    x+=w;
+  }
+
+  // Overall noise for natural look
+  const imgData=ctx.getImageData(0,0,512,512);
+  for(let i=0;i<imgData.data.length;i+=4){
+    const n=(Math.random()-0.5)*12;
+    imgData.data[i]=Math.max(0,Math.min(255,imgData.data[i]+n));
+    imgData.data[i+1]=Math.max(0,Math.min(255,imgData.data[i+1]+n*0.8));
+    imgData.data[i+2]=Math.max(0,Math.min(255,imgData.data[i+2]+n*0.6));
+  }
+  ctx.putImageData(imgData,0,0);
+
+  const tex=new THREE.CanvasTexture(c);
+  tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+  tex.repeat.set(3,1.5);
+  return tex;
+}
+
+// --- Materials ---
+// Floor 1 & 2: wooden cladding
+const matConcrete=new THREE.MeshStandardMaterial({
+  map:makeWoodCladdingTexture(),
+  roughness:0.75,metalness:0.0
+});
+// Floor 2 wall (unused for now)
+const matConcreteWhite=new THREE.MeshStandardMaterial({
+  color:0xF5F2EC,roughness:0.85,metalness:0.02
+});
+const matConcreteSlab=new THREE.MeshStandardMaterial({color:0xD8D0C8,roughness:0.8,metalness:0.03});
+const matWood=new THREE.MeshStandardMaterial({color:0xB07840,roughness:0.65,metalness:0.0});
+const matWoodSlat=new THREE.MeshStandardMaterial({color:0xA06830,roughness:0.7,metalness:0.0});
+const matWoodDark=new THREE.MeshStandardMaterial({color:0x8B5A2B,roughness:0.6,metalness:0.0});
+// Procedural panjur (rolling shutter / louver) texture — horizontal dark slats
+function makePanjurTexture(){
+  const c=document.createElement('canvas');
+  c.width=256;c.height=256;
+  const ctx=c.getContext('2d');
+  const slatH=8; // height of each slat in pixels
+  for(let y=0;y<256;y+=slatH){
+    // Base slat color — dark charcoal with slight variation
+    const shade=36+Math.random()*8;
+    ctx.fillStyle='rgb('+shade+','+shade+','+(shade+4)+')';
+    ctx.fillRect(0,y,256,slatH);
+    // Top highlight (catches light)
+    ctx.fillStyle='rgba(180,180,190,0.15)';
+    ctx.fillRect(0,y,256,1);
+    // Bottom shadow line (gap between slats)
+    ctx.fillStyle='rgba(0,0,0,0.85)';
+    ctx.fillRect(0,y+slatH-1.5,256,1.5);
+    // Subtle inner gradient — slightly darker toward the middle for depth
+    ctx.fillStyle='rgba(0,0,0,0.12)';
+    ctx.fillRect(0,y+slatH*0.45,256,slatH*0.3);
+  }
+  const tex=new THREE.CanvasTexture(c);
+  tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+  tex.repeat.set(1,4);
+  return tex;
+}
+
+// Dark windows — panjur (horizontal shutter slats)
+const matGlass=new THREE.MeshStandardMaterial({
+  map:makePanjurTexture(),
+  roughness:0.6,metalness:0.3,
+  side:THREE.DoubleSide
+});
+// Lit glass — opaque warm glow (looks like a warmly-lit interior)
+const matGlassLit=new THREE.MeshPhysicalMaterial({
+  color:0xE8D0A0,
+  roughness:0.2,metalness:0.1,
+  emissive:0xFFD090,emissiveIntensity:0.55,
+  clearcoat:0.3,clearcoatRoughness:0.15,
+  side:THREE.DoubleSide
+});
+const matRailing=new THREE.MeshStandardMaterial({color:0x222222,roughness:0.25,metalness:0.85});
+const matFrame=new THREE.MeshStandardMaterial({color:0x1A1A1A,roughness:0.3,metalness:0.75});
+const matDoor=new THREE.MeshStandardMaterial({color:0x6B4226,roughness:0.55,metalness:0.0});
+
+// --- Villa dimensions ---
+const W=14; // width (along X)
+const D=10; // depth (along Z)
+const F1=3.2; // floor 1 height
+const F2=3.0; // floor 2 height
+const SLAB=0.22; // slab thickness
+
+// --- Helper ---
+function box(w,h,d,x,y,z,mat,castS,recvS){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+  m.position.set(x,y,z);
+  if(castS!==false)m.castShadow=true;
+  if(recvS!==false)m.receiveShadow=true;
+  return m;
+}
+
+const villa=new THREE.Group();
+
+// ==========================================
+// FLOOR 1 — full footprint
+// ==========================================
+villa.add(box(W,F1,D, 0,F1/2,0, matConcrete));
+
+// Floor 1 slab / overhang edge
+villa.add(box(W+0.3,SLAB,D+0.5, 0,F1+SLAB/2,0, matConcreteSlab));
+
+// ==========================================
+// FLOOR 2 — stepped back (less depth), shifted toward front
+// ==========================================
+const F2_D=D*0.92;
+const F2_offZ=(D-F2_D)/2*0.5; // slight offset toward front, leaving a one-step terrace at back
+const f2base=F1+SLAB;
+
+villa.add(box(W,F2,F2_D, 0,f2base+F2/2,F2_offZ, matConcrete));
+
+// Floor 2 roof slab
+villa.add(box(W+0.3,SLAB,F2_D+0.5, 0,f2base+F2+SLAB/2,F2_offZ, matConcreteSlab));
+
+// Rooftop accent box (wood-clad utility room) — tucked into corner
+const accW=W*0.14,accH=1.8,accD=F2_D*0.28;
+villa.add(box(accW,accH,accD, W/2-accW/2-0.15,f2base+F2+SLAB+accH/2,F2_offZ+F2_D/2-accD/2-0.15, matWood));
+
+// --- Shared constants ---
+const railH=1.05,railTh=0.035;
+
+// ==========================================
+// LARGE GLASS WALLS
+// ==========================================
+const glassInset=0.08;
+
+// Floor 1 front — large glass (right portion)
+const g1W=W*0.45, g1H=F1*0.78;
+villa.add(box(g1W,g1H,0.06, W*0.1,F1*0.43,D/2+glassInset, matGlassLit));
+
+// Floor 1 left side glass
+villa.add(box(0.06,g1H,D*0.4, -W/2-glassInset,F1*0.43,D*0.15, matGlass));
+
+// Floor 1 right side glass
+villa.add(box(0.06,F1*0.55,D*0.3, W/2+glassInset,F1*0.32,D*0.1, matGlass));
+
+// Floor 1 back wall glass (two panels) + vertical mullions
+villa.add(box(W*0.3,g1H*0.85,0.06, -W*0.15,F1*0.45,-D/2-glassInset, matGlass));
+villa.add(box(W*0.18,g1H*0.7,0.06, W*0.25,F1*0.4,-D/2-glassInset, matGlass));
+for(let i=-1;i<=1;i++){
+  villa.add(box(0.05,g1H*0.85,0.03, -W*0.15+i*W*0.08,F1*0.45,-D/2-glassInset-0.02, matFrame,false,false));
+}
+villa.add(box(W*0.3,0.05,0.03, -W*0.15,F1*0.6,-D/2-glassInset-0.02, matFrame,false,false));
+
+// Floor 2 front — full floor-to-ceiling glass door wall (behind balcony)
+const g2H=F2*0.92;
+const balconyGlassW=W*0.4;
+villa.add(box(balconyGlassW,g2H,0.06, W*0.05,f2base+g2H/2+0.05,F2_offZ+F2_D/2+glassInset, matGlassLit));
+// Remaining front glass (non-balcony portion) — shifted left with gap from balcony glass
+villa.add(box(W*0.22,F2*0.7,0.06, -W*0.3,f2base+F2*0.4,F2_offZ+F2_D/2+glassInset, matGlassLit));
+
+// Floor 2 front glass door mullions (vertical dividers like sliding doors)
+const doorFrontZ=F2_offZ+F2_D/2+glassInset+0.02;
+for(let i=-1;i<=1;i++){
+  villa.add(box(0.04,g2H,0.03, W*0.05+i*balconyGlassW*0.25,f2base+g2H/2+0.05,doorFrontZ, matFrame,false,false));
+}
+
+// === ONE-STEP BALCONY (small slab protruding from floor 2 front) ===
+const balcW=balconyGlassW+0.3, balcDepth=0.35, balcSlabH=0.12;
+const balcZ=F2_offZ+F2_D/2+balcDepth/2;
+// Balcony slab
+villa.add(box(balcW,balcSlabH,balcDepth, W*0.05,f2base-balcSlabH/2,balcZ, matConcreteSlab));
+// Balcony railing — front
+const balcRailH=1.0;
+for(let i=0;i<=6;i++){
+  const x=W*0.05+(i/6-0.5)*balcW;
+  villa.add(box(railTh,balcRailH,railTh, x,f2base+balcRailH/2,balcZ+balcDepth/2, matRailing,false,false));
+}
+villa.add(box(balcW,railTh,railTh, W*0.05,f2base+balcRailH,balcZ+balcDepth/2, matRailing,false,false));
+villa.add(box(balcW,railTh,railTh, W*0.05,f2base+balcRailH*0.5,balcZ+balcDepth/2, matRailing,false,false));
+// Balcony railing — sides
+for(let s=-1;s<=1;s+=2){
+  const sx=W*0.05+s*balcW/2;
+  villa.add(box(railTh,balcRailH,balcDepth, sx,f2base+balcRailH/2,balcZ, matRailing,false,false));
+  villa.add(box(railTh,railTh,balcDepth, sx,f2base+balcRailH,balcZ, matRailing,false,false));
+}
+
+// Floor 2 side glasses
+villa.add(box(0.06,g2H,F2_D*0.5, W/2+glassInset,f2base+F2*0.45,F2_offZ, matGlass));
+villa.add(box(0.06,g2H,F2_D*0.5, -W/2-glassInset,f2base+F2*0.45,F2_offZ, matGlass));
+
+// Floor 2 back glass
+villa.add(box(W*0.35,g2H*0.7,0.06, W*0.15,f2base+F2*0.4,F2_offZ-F2_D/2-glassInset, matGlass));
+
+// ==========================================
+// WINDOW FRAMES / MULLIONS
+// ==========================================
+// Floor 1 front — vertical mullions
+for(let i=-1;i<=1;i++){
+  villa.add(box(0.05,g1H,0.03, W*0.1+i*g1W*0.28,F1*0.43,D/2+glassInset+0.02, matFrame,false,false));
+}
+// Horizontal mullion
+villa.add(box(g1W,0.05,0.03, W*0.1,F1*0.58,D/2+glassInset+0.02, matFrame,false,false));
+
+// Floor 2 front mullions (non-balcony section) — aligned with new smaller glass
+villa.add(box(0.05,F2*0.7,0.03, -W*0.23,f2base+F2*0.4,F2_offZ+F2_D/2+glassInset+0.02, matFrame,false,false));
+villa.add(box(0.05,F2*0.7,0.03, -W*0.37,f2base+F2*0.4,F2_offZ+F2_D/2+glassInset+0.02, matFrame,false,false));
+
+// ==========================================
+// FRONT DOOR
+// ==========================================
+villa.add(box(1.3,2.5,0.1, -W*0.18,1.25,D/2+glassInset+0.01, matDoor));
+// Door frame
+villa.add(box(1.45,0.08,0.12, -W*0.18,2.54,D/2+glassInset, matFrame,false,false));
+villa.add(box(0.07,2.5,0.12, -W*0.18-0.69,1.25,D/2+glassInset, matFrame,false,false));
+villa.add(box(0.07,2.5,0.12, -W*0.18+0.69,1.25,D/2+glassInset, matFrame,false,false));
+
+// ==========================================
+// TERRACE RAILINGS (on floor 1 roof, area not covered by floor 2)
+// ==========================================
+const terraceY=F1+SLAB;
+const terraceBackZ=F2_offZ-F2_D/2; // where floor 2 ends at the back
+
+// Back railing (edge of floor 1 roof)
+const backZ=-D/2;
+const railTopY=terraceY+railH;
+// Posts along back
+for(let i=0;i<=8;i++){
+  const x=(i/8-0.5)*W;
+  villa.add(box(railTh,railH,railTh, x,terraceY+railH/2,backZ, matRailing,false,false));
+}
+// Horizontal bars — back
+villa.add(box(W,railTh,railTh, 0,railTopY,backZ, matRailing,false,false));
+villa.add(box(W,railTh,railTh, 0,terraceY+railH*0.45,backZ, matRailing,false,false));
+
+// Side railings on terrace portion (from back to where floor 2 starts)
+const terraceSideLen=Math.abs(terraceBackZ-backZ);
+for(let s=-1;s<=1;s+=2){
+  const sx=s*W/2;
+  for(let i=0;i<=3;i++){
+    const z=backZ+i*(terraceSideLen/3);
+    villa.add(box(railTh,railH,railTh, sx,terraceY+railH/2,z, matRailing,false,false));
+  }
+  villa.add(box(railTh,railH,terraceSideLen, sx,railTopY,backZ+terraceSideLen/2, matRailing,false,false));
+}
+
+// ==========================================
+// ROOFTOP RAILINGS (on top of floor 2)
+// ==========================================
+const roofY=f2base+F2+SLAB;
+const roofRailTop=roofY+railH;
+
+// All 4 sides of floor 2 roof
+for(let i=0;i<=8;i++){
+  const x=(i/8-0.5)*W;
+  villa.add(box(railTh,railH,railTh, x,roofY+railH/2,F2_offZ+F2_D/2, matRailing,false,false));
+  villa.add(box(railTh,railH,railTh, x,roofY+railH/2,F2_offZ-F2_D/2, matRailing,false,false));
+}
+for(let i=0;i<=4;i++){
+  const z=F2_offZ+(i/4-0.5)*F2_D;
+  villa.add(box(railTh,railH,railTh, W/2,roofY+railH/2,z, matRailing,false,false));
+  villa.add(box(railTh,railH,railTh, -W/2,roofY+railH/2,z, matRailing,false,false));
+}
+// Top rails
+villa.add(box(W,railTh,railTh, 0,roofRailTop,F2_offZ+F2_D/2, matRailing,false,false));
+villa.add(box(W,railTh,railTh, 0,roofRailTop,F2_offZ-F2_D/2, matRailing,false,false));
+villa.add(box(railTh,railTh,F2_D, W/2,roofRailTop,F2_offZ, matRailing,false,false));
+villa.add(box(railTh,railTh,F2_D, -W/2,roofRailTop,F2_offZ, matRailing,false,false));
+
+// ==========================================
+// PERGOLA on rooftop
+// ==========================================
+const pergX=-W*0.12, pergZ=F2_offZ-F2_D*0.05;
+const pergW=W*0.38, pergDp=F2_D*0.55, pergH=2.3;
+const pergBase=roofY;
+
+// 4 wooden posts
+[[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([sx,sz])=>{
+  villa.add(box(0.14,pergH,0.14,
+    pergX+sx*(pergW/2-0.1), pergBase+pergH/2, pergZ+sz*(pergDp/2-0.1),
+    matWoodDark,false,false));
+});
+
+// Top beams along width (multiple slats)
+const slats=7;
+for(let i=0;i<slats;i++){
+  const t=(i/(slats-1)-0.5)*pergDp;
+  villa.add(box(pergW+0.1,0.08,0.06,
+    pergX,pergBase+pergH,pergZ+t,
+    matWoodDark,false,false));
+}
+// Main beams along depth (2 support beams)
+villa.add(box(0.1,0.12,pergDp+0.1, pergX-pergW*0.42,pergBase+pergH-0.06,pergZ, matWoodDark,false,false));
+villa.add(box(0.1,0.12,pergDp+0.1, pergX+pergW*0.42,pergBase+pergH-0.06,pergZ, matWoodDark,false,false));
+
+
+scene.add(villa);
+
+// --- Animate ---
+function animate(){
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene,camera);
+}
+animate();
+
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>

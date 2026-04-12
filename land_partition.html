@@ -1,0 +1,2670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Land Partition Planner</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// Minimal OrbitControls (inline to avoid CDN issues)
+THREE.OrbitControls=function(cam,el){
+  var self=this;
+  self.camera=cam;self.domElement=el;self.target=new THREE.Vector3();
+  self.enableDamping=false;self.dampingFactor=0.05;self.maxPolarAngle=Math.PI;
+  self.minDistance=1;self.maxDistance=500;
+  var sph=new THREE.Spherical(),sphD=new THREE.Spherical();
+  var sc=1,panOff=new THREE.Vector3();
+  var rS=new THREE.Vector2(),rE=new THREE.Vector2(),rD=new THREE.Vector2();
+  var pS=new THREE.Vector2(),pE=new THREE.Vector2(),pD=new THREE.Vector2();
+  var st=0;
+  var off=new THREE.Vector3();
+  var q=new THREE.Quaternion().setFromUnitVectors(cam.up,new THREE.Vector3(0,1,0));
+  var qI=q.clone().invert();
+  self.update=function(){
+    off.copy(cam.position).sub(self.target).applyQuaternion(q);
+    sph.setFromVector3(off);
+    sph.theta+=sphD.theta;sph.phi+=sphD.phi;
+    sph.phi=Math.max(0.01,Math.min(self.maxPolarAngle,sph.phi));
+    sph.radius*=sc;
+    sph.radius=Math.max(self.minDistance,Math.min(self.maxDistance,sph.radius));
+    self.target.add(panOff);
+    off.setFromSpherical(sph).applyQuaternion(qI);
+    cam.position.copy(self.target).add(off);
+    cam.lookAt(self.target);
+    if(self.enableDamping){sphD.theta*=(1-self.dampingFactor);sphD.phi*=(1-self.dampingFactor);panOff.multiplyScalar(1-self.dampingFactor)}
+    else{sphD.set(0,0,0);panOff.set(0,0,0)}
+    sc=1;
+  };
+  function doPan(dx,dy){
+    var v=new THREE.Vector3();
+    var d=new THREE.Vector3().copy(cam.position).sub(self.target).length();
+    var tD=d*Math.tan(cam.fov/2*Math.PI/180)*2;
+    v.setFromMatrixColumn(cam.matrix,0);v.multiplyScalar(-dx/el.clientHeight*tD);panOff.add(v);
+    v.setFromMatrixColumn(cam.matrix,1);v.multiplyScalar(dy/el.clientHeight*tD);panOff.add(v);
+  }
+  el.addEventListener('pointerdown',function(e){
+    if(e.button===0){st=1;rS.set(e.clientX,e.clientY)}
+    else if(e.button===2){st=2;pS.set(e.clientX,e.clientY)}
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove',function(e){
+    if(st===1){rE.set(e.clientX,e.clientY);rD.subVectors(rE,rS);sphD.theta-=2*Math.PI*rD.x/el.clientHeight;sphD.phi-=2*Math.PI*rD.y/el.clientHeight;rS.copy(rE)}
+    else if(st===2){pE.set(e.clientX,e.clientY);pD.subVectors(pE,pS);doPan(pD.x,pD.y);pS.copy(pE)}
+  });
+  el.addEventListener('pointerup',function(e){st=0;el.releasePointerCapture(e.pointerId)});
+  el.addEventListener('wheel',function(e){e.preventDefault();sc*=e.deltaY>0?1.05:0.95},{passive:false});
+  el.addEventListener('contextmenu',function(e){e.preventDefault()});
+};
+</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#F7F6F3;--card:#FFF;--text:#1A1A18;--muted:#6B6B66;--hint:#9B9B95;
+  --accent:#2D6A4F;--green-pale:#D8F3DC;
+  --lot1:#D85A30;--lot1f:rgba(216,90,48,.1);--lot1v:rgba(216,90,48,.28);
+  --lot2:#185FA5;--lot2f:rgba(24,95,165,.1);--lot2v:rgba(24,95,165,.28);
+  --lot3:#534AB7;--lot3f:rgba(83,74,183,.1);--lot3v:rgba(83,74,183,.28);
+  --sb:#B4B2A9;
+  --dr:#C62828;--drb:rgba(255,235,238,.92);
+  --db:#0D47A1;--dbb:rgba(227,242,253,.92);
+  --dg:#2E7D32;--dgb:rgba(232,245,233,.92);
+  --border:#E0DED8;--radius:10px;
+}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text)}
+.container{max-width:1020px;margin:0 auto;padding:20px}
+header{text-align:center;margin-bottom:20px;position:relative}
+header h1{font-size:26px;font-weight:700;letter-spacing:-.5px}
+header p{font-size:15px;color:var(--muted);margin-top:3px}
+.stats-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:9px 10px;text-align:center}
+.stat .val{font-family:'DM Mono',monospace;font-size:19px;font-weight:500;color:var(--accent)}
+.stat .lbl{font-size:11px;color:var(--muted);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+.info-row{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:14px}
+.info-row .info-card{flex:1;min-width:170px}
+.map-wrap{position:relative}
+.map-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.map-card h3{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px}
+.map-hint{font-size:12.5px;color:var(--hint);margin-bottom:8px;font-style:italic}
+
+.spinner-overlay{position:absolute;top:0;left:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;background:rgba(255,255,255,.55);border-radius:var(--radius);z-index:10;backdrop-filter:blur(1px)}
+.spinner-overlay.show{display:flex}
+.spinner-dot{display:flex;align-items:center;gap:6px;padding:8px 16px;background:var(--card);border-radius:20px;border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,.08);font-size:14px;color:var(--muted);font-weight:500}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner-icon{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
+
+.map-btn-row{position:absolute;bottom:10px;right:10px;display:flex;gap:6px;z-index:5}
+.map-btn-row .fullscreen-btn{position:static}
+.three-controls{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;margin-top:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.three-controls label{font-size:13px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:6px}
+.three-controls input[type="range"]{width:160px;accent-color:var(--accent)}
+.three-controls select{padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:inherit;font-size:13px;background:var(--card);color:var(--text)}
+.three-controls .time-display{font-family:'DM Mono',monospace;font-size:14px;font-weight:600;color:var(--text);min-width:44px}
+.three-controls .sun-info{font-size:12px;color:var(--muted)}
+.info-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:11px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.info-card h3{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:7px;text-transform:uppercase;letter-spacing:.5px}
+.lot-item{display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid var(--border);font-size:13px}
+.lot-item:last-child{border-bottom:none}
+.lot-dot{width:9px;height:9px;border-radius:3px;flex-shrink:0}
+.lot-info{flex:1}.lot-name{font-weight:600}.lot-detail{font-size:11.5px;color:var(--muted);margin-top:1px}
+.lot-area{font-family:'DM Mono',monospace;font-weight:500;text-align:right}
+.legend-row{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);padding:2px 0}
+.legend-swatch{width:13px;height:8px;border-radius:2px;flex-shrink:0}
+.note{font-size:12px;color:var(--muted);line-height:1.5;padding:7px 9px;border-radius:6px}
+.note strong{color:var(--text);font-weight:600}
+.note.green{background:var(--green-pale);border-left:3px solid var(--accent)}
+.note.warn{background:#FFF3E0;border-left:3px solid #E65100}
+.tab-bar{display:flex;gap:0;margin-bottom:14px;border-bottom:2px solid var(--border)}
+.tab-btn{padding:9px 20px;font-family:inherit;font-size:14px;font-weight:600;color:var(--muted);background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;cursor:pointer;transition:.2s}
+.tab-btn:hover{color:var(--text)}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-content{display:none}.tab-content.active{display:block}
+.control-group label{cursor:pointer}
+.control-group input[type="radio"]{margin-right:3px;cursor:pointer}
+.control-group .group-title{pointer-events:none;display:block;width:100%;margin-bottom:4px;border-bottom:1px solid var(--border);padding-bottom:4px}
+svg text{font-family:'DM Sans',sans-serif;user-select:none}
+.villa-body{cursor:grab}.villa-body:active{cursor:grabbing}
+.rotate-handle{cursor:grab;transition:opacity .15s}.rotate-handle:hover{opacity:1!important}
+.controls-row{display:flex;gap:10px;margin-bottom:10px;align-items:stretch;flex-wrap:wrap}
+.control-group{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:1;min-width:0}
+.control-group .group-title{font-size:11.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-right:2px}
+.control-group label{font-size:13px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:5px}
+.control-group input{width:70px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:14px;background:var(--card);color:var(--text);text-align:center}
+.taks-kaks-info{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.taks-kaks-info .info-item{display:flex;align-items:center;gap:4px}
+.taks-kaks-info .info-val{font-family:'DM Mono',monospace;font-weight:600;color:var(--text)}
+.taks-kaks-info .info-val.warn{color:var(--dr)}
+.taks-kaks-info .info-val.ok{color:var(--accent)}
+.fullscreen-btn{padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--card);font-family:inherit;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;opacity:.8;transition:.2s}
+.fullscreen-btn:hover{opacity:1;background:var(--accent);color:#fff}
+.map-wrap.fullscreen{position:fixed;top:0;left:0;right:0;bottom:0;z-index:100;background:var(--bg);padding:0;margin:0;overflow:hidden}
+.map-wrap.fullscreen .map-card{max-width:none;height:100%;border-radius:0;border:none;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.map-wrap.fullscreen .map-card h3,.map-wrap.fullscreen .map-card .map-hint{display:none}
+.map-wrap.fullscreen .map-card svg{width:100%;height:100%;display:block}
+.zoom-controls{position:fixed;bottom:20px;left:20px;display:none;flex-direction:column;gap:4px;z-index:102}
+.zoom-btn{width:36px;height:36px;border:1px solid var(--border);border-radius:8px;background:var(--card);font-size:20px;font-weight:700;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.2s;box-shadow:0 2px 6px rgba(0,0,0,.1)}
+.zoom-btn:hover{background:var(--accent);color:#fff}
+body.fs-active{overflow:hidden}
+.map-wrap.fullscreen .fullscreen-btn{bottom:auto;top:10px;right:10px;background:#C62828;color:#fff;border-color:#C62828;font-size:16px;padding:4px 10px;line-height:1;border-radius:50%}
+.btn-group{display:flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.toggle-btn{padding:6px 12px;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--muted);background:var(--card);border:none;border-right:1px solid var(--border);cursor:pointer;transition:background .15s,color .15s;white-space:nowrap}
+.toggle-btn:last-child{border-right:none}
+.toggle-btn:hover{background:var(--green-pale);color:var(--text)}
+.toggle-btn.active{background:var(--accent);color:#fff}
+@media(max-width:740px){.stats-row{grid-template-columns:repeat(3,1fr)}.info-row{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1 data-i18n="title"></h1>
+    <p data-i18n="subtitle"></p>
+  </header>
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="free">Serbest Yerleşim</button>
+    <button class="tab-btn" data-tab="parcelled">Parselli Yerleşim</button>
+  </div>
+  <div class="tab-content active" id="tab-free">
+  <div class="controls-row">
+    <div class="control-group">
+      <span class="group-title">Villa Boyutu</span>
+      <label>En (m): <input type="number" id="villaW" value="9" min="3" max="20" step="0.5"></label>
+      <label>Boy (m): <input type="number" id="villaH" value="8.5" min="3" max="20" step="0.5"></label>
+      <label>Kat: <input type="number" id="floorCount" value="2" min="1" max="5" step="1"></label>
+    </div>
+    <div class="control-group">
+      <span class="group-title">İmar Limitleri</span>
+      <label>TAKS: <input type="number" id="taksLimit" value="0.30" min="0.05" max="1" step="0.01"></label>
+      <label>KAKS: <input type="number" id="kaksLimit" value="0.60" min="0.05" max="3" step="0.01"></label>
+    </div>
+    <button id="downloadBtn" onclick="downloadImage()" style="padding:9px 16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--accent);color:#fff;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;align-self:stretch">Planı İndir</button>
+  </div>
+  <div class="taks-kaks-info" id="taksKaksInfo">
+    <div class="info-item">TAKS: <span class="info-val" id="taksVal">0.206</span></div>
+    <div class="info-item">Maks taban/villa: <span class="info-val" id="taksMax">93 m²</span></div>
+    <div class="info-item">KAKS: <span class="info-val" id="kaksVal">0.411</span></div>
+    <div class="info-item">Maks toplam/villa: <span class="info-val" id="kaksMax">186 m²</span></div>
+    <div class="info-item">Maks yaşam alanı/villa: <span class="info-val" id="livingMax">186 m²</span></div>
+  </div>
+  <div class="stats-row">
+    <div class="stat"><div class="val">1,218</div><div class="lbl" data-i18n="s_total"></div></div>
+    <div class="stat"><div class="val">659</div><div class="lbl" data-i18n="s_build"></div></div>
+    <div class="stat"><div class="val">~372</div><div class="lbl" data-i18n="s_lot"></div></div>
+    <div class="stat"><div class="val">76.5</div><div class="lbl" data-i18n="s_floor"></div></div>
+    <div class="stat"><div class="val">~153</div><div class="lbl" data-i18n="s_vtot"></div></div>
+  </div>
+  <div class="info-row">
+    <div class="info-card">
+      <h3 data-i18n="lot_h"></h3>
+      <div class="lot-item"><div class="lot-dot" style="background:var(--lot1)"></div><div class="lot-info"><div class="lot-name" data-i18n="lA"></div><div class="lot-detail"></div></div><div class="lot-area"></div></div>
+      <div class="lot-item"><div class="lot-dot" style="background:var(--lot2)"></div><div class="lot-info"><div class="lot-name" data-i18n="lB"></div><div class="lot-detail"></div></div><div class="lot-area"></div></div>
+      <div class="lot-item"><div class="lot-dot" style="background:var(--lot3)"></div><div class="lot-info"><div class="lot-name" data-i18n="lC"></div><div class="lot-detail"></div></div><div class="lot-area"></div></div>
+    </div>
+    <div class="info-card">
+      <h3 data-i18n="dk_h"></h3>
+      <div class="legend-row"><div class="legend-swatch" style="background:var(--dr)"></div><span data-i18n="dk_villa"></span></div>
+      <div class="legend-row"><div class="legend-swatch" style="background:var(--db)"></div><span data-i18n="dk_between"></span></div>
+      <div class="legend-row"><div class="legend-swatch" style="background:var(--dg)"></div><span data-i18n="dk_edges"></span></div>
+      <div class="legend-row"><div class="legend-swatch" style="background:var(--sb);opacity:.5"></div><span data-i18n="dk_sb"></span></div>
+    </div>
+    <div class="info-card"><h3 data-i18n="sb_h"></h3><div class="note warn" data-i18n-html="sb_n"></div></div>
+    <div class="info-card"><h3 data-i18n="dn_h"></h3><div class="note warn" id="designNote"></div></div>
+    <div class="info-card"><h3 data-i18n="rd_h"></h3><div class="note green" data-i18n-html="rd_n"></div></div>
+  </div>
+  <div class="map-wrap" id="mapWrap">
+    <div class="map-card">
+      <h3 data-i18n="map_h"></h3>
+      <div class="map-hint" data-i18n="map_hint"></div>
+      <svg id="map" viewBox="0 0 600 600" width="100%"></svg>
+      <canvas id="threeCanvas" style="display:none;width:100%;height:600px"></canvas>
+    </div>
+    <div class="map-btn-row">
+      <div class="btn-group view-toggle" id="viewToggle">
+        <button type="button" class="toggle-btn active" onclick="setView('2d',this)">2D</button>
+        <button type="button" class="toggle-btn" onclick="setView('3d',this)">3D</button>
+      </div>
+      <button class="fullscreen-btn" id="fsBtn" onclick="toggleFullscreen()">Tam Ekran</button>
+    </div>
+    <div class="three-controls" id="threeControls" style="display:none">
+      <label>Saat: <input type="range" id="timeSlider" min="6" max="20" step="0.25" value="10"><span class="time-display" id="timeDisplay">10:00</span></label>
+      <label>Ay: <select id="monthSelect"><option value="0">Ocak</option><option value="1">Şubat</option><option value="2">Mart</option><option value="3" selected>Nisan</option><option value="4">Mayıs</option><option value="5">Haziran</option><option value="6">Temmuz</option><option value="7">Ağustos</option><option value="8">Eylül</option><option value="9">Ekim</option><option value="10">Kasım</option><option value="11">Aralık</option></select></label>
+      <span class="sun-info" id="sunInfo"></span>
+    </div>
+    <div class="spinner-overlay" id="spinner">
+      <div class="spinner-dot"><div class="spinner-icon"></div><span data-i18n="calculating"></span></div>
+    </div>
+  </div>
+  <div class="zoom-controls" id="zoomControls">
+    <button class="zoom-btn" onclick="zoom(1)">+</button>
+    <button class="zoom-btn" onclick="zoom(-1)">−</button>
+  </div>
+  </div><!-- end tab-free -->
+
+  <div class="tab-content" id="tab-parcelled">
+  <div class="controls-row">
+    <div class="control-group" style="flex:1 1 100%">
+      <span class="group-title">Bölme Yönü</span>
+      <div class="btn-group" id="pDivDirGroup">
+        <button type="button" class="toggle-btn active" data-dir="p3p2" onclick="pSetDir(this)">⊥ P3–P2</button>
+        <button type="button" class="toggle-btn" data-dir="p1p2" onclick="pSetDir(this)">∥ P1–P6</button>
+        <button type="button" class="toggle-btn" data-dir="p6p4" onclick="pSetDir(this)">⊥ P6–P4</button>
+        <button type="button" class="toggle-btn" data-dir="perpp1p2" onclick="pSetDir(this)">⊥ P1–P2</button>
+        <button type="button" class="toggle-btn" data-dir="optimum" onclick="pSetDir(this)">◆ Optimum</button>
+        <button type="button" class="toggle-btn" data-dir="optimum2" onclick="pSetDir(this)">◆ Optimum 2</button>
+        <button type="button" class="toggle-btn" data-dir="optimum3" onclick="pSetDir(this)">◆ Optimum 3</button>
+      </div>
+      <div class="btn-group" id="pDivModeGroup" style="margin-left:auto">
+        <button type="button" class="toggle-btn active" data-mode="parcel" onclick="pSetMode(this)">Eşit Parsel</button>
+        <button type="button" class="toggle-btn" data-mode="buildable" onclick="pSetMode(this)">Eşit Yapılaşma</button>
+      </div>
+    </div>
+  </div>
+  <div class="controls-row">
+    <div class="control-group">
+      <span class="group-title">Villa</span>
+      <label>Taban: <strong>72 m²</strong> (sabit)</label>
+      <label>Kat: <input type="number" id="pFloorCount" value="2" min="1" max="5" step="1"></label>
+    </div>
+    <div class="control-group">
+      <span class="group-title">İmar Limitleri</span>
+      <label>TAKS: <input type="number" id="pTaksLimit" value="0.30" min="0.05" max="1" step="0.01"></label>
+      <label>KAKS: <input type="number" id="pKaksLimit" value="0.60" min="0.05" max="3" step="0.01"></label>
+    </div>
+    <button id="pDownloadBtn" onclick="pDownloadImage()" style="padding:9px 16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--accent);color:#fff;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;align-self:stretch">Planı İndir</button>
+  </div>
+  <div class="taks-kaks-info" id="pTaksKaksInfo">
+    <div class="info-item">TAKS: <span class="info-val" id="pTaksVal">0.206</span></div>
+    <div class="info-item">Maks taban/villa: <span class="info-val" id="pTaksMax">93 m²</span></div>
+    <div class="info-item">KAKS: <span class="info-val" id="pKaksVal">0.411</span></div>
+    <div class="info-item">Maks toplam/villa: <span class="info-val" id="pKaksMax">186 m²</span></div>
+    <div class="info-item">Maks yaşam alanı/villa: <span class="info-val" id="pLivingMax">186 m²</span></div>
+  </div>
+  <div class="stats-row" id="pStatsRow">
+    <div class="stat"><div class="val">1,218</div><div class="lbl">Toplam m²</div></div>
+    <div class="stat"><div class="val">659</div><div class="lbl">Yapılaşma m²</div></div>
+    <div class="stat"><div class="val">~372</div><div class="lbl">Parsel başı m²</div></div>
+    <div class="stat"><div class="val">76.5</div><div class="lbl">Villa taban m²</div></div>
+    <div class="stat"><div class="val">~153</div><div class="lbl">Villa toplam m²</div></div>
+  </div>
+  <div class="info-row">
+    <div class="info-card">
+      <h3>Parsel dağılımı</h3>
+      <div class="lot-item"><div class="lot-dot" style="background:var(--lot1)"></div><div class="lot-info"><div class="lot-name">Parsel A — üst</div><div class="lot-detail" id="pLotDetailA"></div></div><div class="lot-area" id="pLotAreaA"></div></div>
+      <div class="lot-item"><div class="lot-dot" style="background:var(--lot2)"></div><div class="lot-info"><div class="lot-name">Parsel B — orta</div><div class="lot-detail" id="pLotDetailB"></div></div><div class="lot-area" id="pLotAreaB"></div></div>
+      <div class="lot-item"><div class="lot-dot" style="background:var(--lot3)"></div><div class="lot-info"><div class="lot-name">Parsel C — alt</div><div class="lot-detail" id="pLotDetailC"></div></div><div class="lot-area" id="pLotAreaC"></div></div>
+    </div>
+    <div class="info-card">
+      <h3>Ölçü anahtarı</h3>
+      <div class="legend-row"><div class="legend-swatch" style="background:var(--dr)"></div><span>Villa boyutları ve sınırlara mesafe</span></div>
+      <div class="legend-row"><div class="legend-swatch" style="background:var(--db)"></div><span>Villalar arası</span></div>
+      <div class="legend-row"><div class="legend-swatch" style="background:var(--dg)"></div><span>Parsel kenarları</span></div>
+      <div class="legend-row"><div class="legend-swatch" style="background:#E65100;opacity:.6"></div><span>Parsel bölme çizgileri</span></div>
+    </div>
+    <div class="info-card"><h3>Çekme mesafeleri</h3><div class="note warn">Yoldan <strong>5 m</strong> (P6–P5–P4–P3–P2). Komşudan <strong>3 m</strong> (P6–P1, P1–P2).</div></div>
+    <div class="info-card"><h3>Tasarım notu</h3><div class="note warn" id="pDesignNote"></div></div>
+    <div class="info-card"><h3>Yol erişimi</h3><div class="note green">Yol: <strong>P6→P5→P3→P2</strong>. Her parsel yola cepheli.</div></div>
+  </div>
+  <div class="map-wrap" id="pMapWrap">
+    <div class="map-card">
+      <h3>Parselli yerleşim planı</h3>
+      <div class="map-hint">Arazi 3 parsele bölünmüştür. Villa konumları otomatik hesaplanır.</div>
+      <svg id="pMap" viewBox="0 0 600 600" width="100%"></svg>
+      <canvas id="pThreeCanvas" style="display:none;width:100%;height:600px"></canvas>
+    </div>
+    <div class="map-btn-row">
+      <div class="btn-group view-toggle" id="pViewToggle">
+        <button type="button" class="toggle-btn active" onclick="setView('2d',this)">2D</button>
+        <button type="button" class="toggle-btn" onclick="setView('3d',this)">3D</button>
+      </div>
+      <button class="fullscreen-btn" id="pFsBtn" onclick="pToggleFullscreen()">Tam Ekran</button>
+    </div>
+    <div class="three-controls" id="pThreeControls" style="display:none">
+      <label>Saat: <input type="range" id="pTimeSlider" min="6" max="20" step="0.25" value="10"><span class="time-display" id="pTimeDisplay">10:00</span></label>
+      <label>Ay: <select id="pMonthSelect"><option value="0">Ocak</option><option value="1">Şubat</option><option value="2">Mart</option><option value="3" selected>Nisan</option><option value="4">Mayıs</option><option value="5">Haziran</option><option value="6">Temmuz</option><option value="7">Ağustos</option><option value="8">Eylül</option><option value="9">Ekim</option><option value="10">Kasım</option><option value="11">Aralık</option></select></label>
+      <span class="sun-info" id="pSunInfo"></span>
+    </div>
+    <div class="spinner-overlay" id="pSpinner">
+      <div class="spinner-dot"><div class="spinner-icon"></div><span>Hesaplanıyor...</span></div>
+    </div>
+  </div>
+  <div class="zoom-controls" id="pZoomControls">
+    <button class="zoom-btn" onclick="pZoom(1)">+</button>
+    <button class="zoom-btn" onclick="pZoom(-1)">−</button>
+  </div>
+  </div><!-- end tab-parcelled -->
+
+</div>
+<script>
+const T={tr:{title:'Arazi Planı',subtitle:'3 villa · serbest veya parselli yerleşim modları',
+s_total:'Toplam m²',s_build:'Yapılaşma m²',s_lot:'Parsel başı m²',s_floor:'Villa taban m²',s_vtot:'Villa toplam m²',
+map_h:'Serbest yerleşim planı',map_hint:'Villaları yapılaşma alanı içinde istediğiniz yere sürükleyin. Parsel renkleri görsel rehberdir — sınır değil. Villalar çakışamaz.',
+calculating:'Hesaplanıyor...',
+lot_h:'Parsel dağılımı',lA:'Parsel A — batı',lAd:'Villa 76,5 m² + bahçe 296 m²',lB:'Parsel B — doğu',lBd:'Villa 76,5 m² + bahçe 302 m²',lC:'Parsel C — güney',lCd:'Villa 76,5 m² + bahçe 296 m²',
+dk_h:'Ölçü anahtarı',dk_villa:'Villa boyutları ve sınırlara mesafe',dk_between:'Villalar arası',dk_edges:'Parsel kenarları',dk_sb:'Yapılaşma sınırı',
+sb_h:'Çekme mesafeleri',sb_n:'Yoldan <strong>5 m</strong> (P6–P5–P4–P3–P2). Komşudan <strong>3 m</strong> (P6–P1, P1–P2).',
+dn_h:'Tasarım notu',dn_n:'<strong>İki katlı villa</strong>: 76,5 m² taban × 2 = ~153 m² yaşam alanı.',
+rd_h:'Yol erişimi',rd_n:'Yol: <strong>P6→P5→P3→P2</strong>. C parseli <strong>ortak yol</strong> (~3m) gerektirir.',
+sv_road:'YOL',sv_v:'Villa',sv_lA:'PARSEL A',sv_lB:'PARSEL B',sv_lC:'PARSEL C',sv_sb5:'5m çekme',sv_sb3:'3m çekme'}};
+const lang='tr';
+function applyLang(l){const t=T[l];document.querySelectorAll('[data-i18n]').forEach(e=>{const k=e.getAttribute('data-i18n');if(t[k]!==undefined)e.textContent=t[k]});document.querySelectorAll('[data-i18n-html]').forEach(e=>{const k=e.getAttribute('data-i18n-html');if(t[k]!==undefined)e.innerHTML=t[k]});document.documentElement.lang=l}
+
+// ─── Geometry ───
+const pad=65,svgW=600,svgH=600,sc=10.24;
+function S(x,y){return[pad+x*sc,svgH-pad-y*sc]}
+function M(sx,sy){return[(sx-pad)/sc,(svgH-pad-sy)/sc]}
+
+const P1=[10.0,0.0],P2=[40.1,13.3],P3=[33.1,42.2],P4=[27.7,45.5],P5=[15.3,40.0],P6=[-4.2,25.5];
+const parcelM=[P1,P2,P3,P4,P5,P6];
+const buildM=[[11.3,3.8],[34.7,14.2],[28.7,39.0],[27.3,39.9],[17.8,35.7],[0.7,22.9]];
+// Dynamic Voronoi partition — clip parcel by perpendicular bisector half-planes
+function clipPolyByLine(poly,px,py,nx,ny){
+  // Sutherland-Hodgman: keep the side where dot(point-p, n) <= 0
+  if(poly.length<3)return poly;
+  const out=[];
+  for(let i=0;i<poly.length;i++){
+    const cur=poly[i],nxt=poly[(i+1)%poly.length];
+    const dc=(cur[0]-px)*nx+(cur[1]-py)*ny;
+    const dn=(nxt[0]-px)*nx+(nxt[1]-py)*ny;
+    if(dc<=0) out.push(cur);
+    if((dc<=0)!==(dn<=0)){
+      // intersection
+      const t=dc/(dc-dn);
+      out.push([cur[0]+t*(nxt[0]-cur[0]),cur[1]+t*(nxt[1]-cur[1])]);
+    }
+  }
+  return out;
+}
+function computeLots(centers,weights){
+  const lots=[];
+  for(let i=0;i<3;i++){
+    let cell=[...parcelM];
+    for(let j=0;j<3;j++){
+      if(i===j)continue;
+      const dx=centers[j][0]-centers[i][0],dy=centers[j][1]-centers[i][1];
+      const d=Math.hypot(dx,dy);
+      if(d<0.001)continue;
+      const nx=dx/d,ny=dy/d;
+      const o=(weights[i]-weights[j])/2;
+      const mx=(centers[i][0]+centers[j][0])/2+o*nx;
+      const my=(centers[i][1]+centers[j][1])/2+o*ny;
+      cell=clipPolyByLine(cell,mx,my,nx,ny);
+    }
+    lots.push(cell);
+  }
+  return lots;
+}
+function weightConstraints(centers){
+  // Compute min/max weight differences so bisectors don't cross villa footprints
+  const pairs=[[0,1],[0,2],[1,2]];
+  const constraints=[];
+  for(const[i,j]of pairs){
+    const dx=centers[j][0]-centers[i][0],dy=centers[j][1]-centers[i][1];
+    const d=Math.hypot(dx,dy);
+    const nx=dx/d,ny=dy/d;
+    const mid=[(centers[i][0]+centers[j][0])/2,(centers[i][1]+centers[j][1])/2];
+    const cornersI=rotCorners(villas[i].cx,villas[i].cy,vw,vh,villas[i].angle);
+    const cornersJ=rotCorners(villas[j].cx,villas[j].cy,vw,vh,villas[j].angle);
+    let minO=-d/2,maxO=d/2;
+    for(const c of cornersI){
+      const proj=(c[0]-mid[0])*nx+(c[1]-mid[1])*ny;
+      minO=Math.max(minO,proj+0.3);
+    }
+    for(const c of cornersJ){
+      const proj=(c[0]-mid[0])*nx+(c[1]-mid[1])*ny;
+      maxO=Math.min(maxO,proj-0.3);
+    }
+    constraints.push({i,j,minDiff:2*minO,maxDiff:2*maxO});
+  }
+  return constraints;
+}
+function projectWeights(w,constraints){
+  for(let round=0;round<20;round++){
+    for(const{i,j,minDiff,maxDiff}of constraints){
+      const diff=w[i]-w[j];
+      if(diff<minDiff){const fix=(minDiff-diff)/2;w[i]+=fix;w[j]-=fix}
+      else if(diff>maxDiff){const fix=(diff-maxDiff)/2;w[i]-=fix;w[j]+=fix}
+    }
+  }
+}
+function voronoiLots(){
+  const centers=villas.map(v=>[v.cx,v.cy]);
+  const target=polyArea(parcelM)/3;
+  const constraints=weightConstraints(centers);
+  const w=[0,0,0];
+  for(let iter=0;iter<80;iter++){
+    const lots=computeLots(centers,w);
+    const areas=lots.map(l=>l.length>=3?polyArea(l):0);
+    let maxErr=0;
+    for(let i=0;i<3;i++) maxErr=Math.max(maxErr,Math.abs(areas[i]-target));
+    if(maxErr<3) break;
+    for(let i=0;i<3;i++) w[i]-=0.05*(areas[i]-target);
+    projectWeights(w,constraints);
+  }
+  return computeLots(centers,w);
+}
+function polyArea(poly){
+  let a=0;
+  for(let i=0;i<poly.length;i++){
+    const j=(i+1)%poly.length;
+    a+=poly[i][0]*poly[j][1]-poly[j][0]*poly[i][1];
+  }
+  return Math.abs(a)/2;
+}
+function polyCentroid(poly){
+  let cx=0,cy=0;
+  for(const p of poly){cx+=p[0];cy+=p[1]}
+  return[cx/poly.length,cy/poly.length];
+}
+// Keep lot data accessible for rendering and stats
+let dynamicLots=[];
+let vw=9,vh=8.5;
+
+const villas=[
+  {id:'A',cx:10.0,cy:24.0,angle:0,fill:'var(--lot1v)',stroke:'var(--lot1)',text:'var(--lot1)'},
+  {id:'B',cx:24.0,cy:26.0,angle:0,fill:'var(--lot2v)',stroke:'var(--lot2)',text:'var(--lot2)'},
+  {id:'C',cx:17.0,cy:12.0,angle:0,fill:'var(--lot3v)',stroke:'var(--lot3)',text:'var(--lot3)'},
+];
+
+function rotCorners(cx,cy,w,h,a){
+  const hw=w/2,hh=h/2,c=Math.cos(a),s=Math.sin(a);
+  return[[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]].map(([dx,dy])=>[cx+dx*c-dy*s,cy+dx*s+dy*c]);
+}
+function pip(x,y,poly){
+  let ins=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const[xi,yi]=poly[i],[xj,yj]=poly[j];
+    if((yi>y)!==(yj>y)&&x<(xj-xi)*(y-yi)/(yj-yi)+xi)ins=!ins;
+  }return ins;
+}
+function villaFits(cx,cy,a){return rotCorners(cx,cy,vw,vh,a).every(([x,y])=>pip(x,y,buildM))}
+function villasOverlap(v1cx,v1cy,v1a,v2){
+  // SAT-lite: check if any corner of v1 is inside v2's rotated rect, or vice versa
+  const c1=rotCorners(v1cx,v1cy,vw,vh,v1a),c2=rotCorners(v2.cx,v2.cy,vw,vh,v2.angle);
+  // Use separating axis on both rects' edge normals
+  function axes(corners){
+    const ax=[];
+    for(let i=0;i<4;i++){
+      const[x1,y1]=corners[i],[x2,y2]=corners[(i+1)%4];
+      const dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy);
+      if(len>0)ax.push([-dy/len,dx/len]);
+    }return ax;
+  }
+  function project(corners,axis){
+    let mn=Infinity,mx=-Infinity;
+    for(const[x,y]of corners){const d=x*axis[0]+y*axis[1];if(d<mn)mn=d;if(d>mx)mx=d}
+    return[mn,mx];
+  }
+  const allAxes=[...axes(c1),...axes(c2)];
+  for(const ax of allAxes){
+    const[mn1,mx1]=project(c1,ax),[mn2,mx2]=project(c2,ax);
+    if(mx1<=mn2||mx2<=mn1)return false; // separated
+  }
+  return true; // overlapping
+}
+function canPlace(vid,cx,cy,a){
+  if(!rotCorners(cx,cy,vw,vh,a).every(([x,y])=>pip(x,y,buildM)))return false;
+  for(const other of villas){
+    if(other.id===vid)continue;
+    if(villasOverlap(cx,cy,a,other))return false;
+  }
+  return true;
+}
+function dist(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1])}
+function ptSeg(p,a,b){
+  const dx=b[0]-a[0],dy=b[1]-a[1],l2=dx*dx+dy*dy;
+  if(l2===0)return{d:dist(p,a),proj:[...a]};
+  const t=Math.max(0,Math.min(1,((p[0]-a[0])*dx+(p[1]-a[1])*dy)/l2));
+  const proj=[a[0]+t*dx,a[1]+t*dy];return{d:dist(p,proj),proj};
+}
+function v2edge(v,ea,eb){
+  const corners=rotCorners(v.cx,v.cy,vw,vh,v.angle);
+  const mids=corners.map((c,i)=>{const n=corners[(i+1)%4];return[(c[0]+n[0])/2,(c[1]+n[1])/2]});
+  let best={d:999,from:null,to:null};
+  for(const p of[...corners,...mids]){const{d,proj}=ptSeg(p,ea,eb);if(d<best.d)best={d,from:p,to:proj}}
+  return best;
+}
+function v2v(v1,v2){
+  const c1=rotCorners(v1.cx,v1.cy,vw,vh,v1.angle),c2=rotCorners(v2.cx,v2.cy,vw,vh,v2.angle);
+  const pts1=[...c1,...c1.map((c,i)=>{const n=c1[(i+1)%4];return[(c[0]+n[0])/2,(c[1]+n[1])/2]})];
+  const pts2=[...c2,...c2.map((c,i)=>{const n=c2[(i+1)%4];return[(c[0]+n[0])/2,(c[1]+n[1])/2]})];
+  let best={d:999,from:null,to:null};
+  for(const p of pts1)for(let i=0;i<4;i++){const{d,proj}=ptSeg(p,c2[i],c2[(i+1)%4]);if(d<best.d)best={d,from:p,to:proj}}
+  for(const p of pts2)for(let i=0;i<4;i++){const{d,proj}=ptSeg(p,c1[i],c1[(i+1)%4]);if(d<best.d)best={d,from:proj,to:p}}
+  return best;
+}
+
+// ─── SVG helpers ───
+function ps(pts){return pts.map(p=>{const s=S(p[0],p[1]);return s[0].toFixed(1)+','+s[1].toFixed(1)}).join(' ')}
+
+function dimSVG(from,to,label,color,bg){
+  const[x1,y1]=S(from[0],from[1]),[x2,y2]=S(to[0],to[1]);
+  const dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy);if(len<4)return'';
+  const nx=-dy/len,ny=dx/len,mx=(x1+x2)/2,my=(y1+y2)/2;
+  let h=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width=".9" stroke-dasharray="3,2"/>`;
+  h+=`<line x1="${x1-nx*3}" y1="${y1-ny*3}" x2="${x1+nx*3}" y2="${y1+ny*3}" stroke="${color}" stroke-width=".9"/>`;
+  h+=`<line x1="${x2-nx*3}" y1="${y2-ny*3}" x2="${x2+nx*3}" y2="${y2+ny*3}" stroke="${color}" stroke-width=".9"/>`;
+  const pw=label.length*5.5+8;
+  h+=`<rect x="${mx-pw/2}" y="${my-7}" width="${pw}" height="14" rx="2.5" fill="${bg}"/>`;
+  const ang=Math.atan2(dy,dx)*180/Math.PI,flip=(ang>90||ang<-90)?ang+180:ang;
+  h+=`<text x="${mx}" y="${my+3.5}" text-anchor="middle" font-size="9" font-weight="600" fill="${color}" transform="rotate(${flip},${mx},${my})">${label}</text>`;
+  return h;
+}
+function dimOff(from,to,label,color,bg,offset){
+  const[x1,y1]=S(from[0],from[1]),[x2,y2]=S(to[0],to[1]);
+  const dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy);if(len<4)return'';
+  const nx=-dy/len,ny=dx/len,o=offset;
+  const ax=x1+nx*o,ay=y1+ny*o,bx=x2+nx*o,by=y2+ny*o,mx=(ax+bx)/2,my=(ay+by)/2;
+  let h=`<line x1="${x1}" y1="${y1}" x2="${ax+nx*2}" y2="${ay+ny*2}" stroke="${color}" stroke-width=".4" opacity=".5"/>`;
+  h+=`<line x1="${x2}" y1="${y2}" x2="${bx+nx*2}" y2="${by+ny*2}" stroke="${color}" stroke-width=".4" opacity=".5"/>`;
+  h+=`<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="${color}" stroke-width=".8"/>`;
+  h+=`<line x1="${ax-nx*3}" y1="${ay-ny*3}" x2="${ax+nx*3}" y2="${ay+ny*3}" stroke="${color}" stroke-width=".8"/>`;
+  h+=`<line x1="${bx-nx*3}" y1="${by-ny*3}" x2="${bx+nx*3}" y2="${by+ny*3}" stroke="${color}" stroke-width=".8"/>`;
+  const pw=label.length*5.5+8;
+  h+=`<rect x="${mx-pw/2}" y="${my-7}" width="${pw}" height="14" rx="2.5" fill="${bg}"/>`;
+  const ang=Math.atan2(dy,dx)*180/Math.PI,flip=(ang>90||ang<-90)?ang+180:ang;
+  h+=`<text x="${mx}" y="${my+3.5}" text-anchor="middle" font-size="9" font-weight="600" fill="${color}" transform="rotate(${flip},${mx},${my})">${label}</text>`;
+  return h;
+}
+
+// ─── Rendering ───
+// Base layer: everything that doesn't need recalculating (parcel, lots, road, buildable, labels, villas)
+// Dimension layer: all dimension lines (expensive)
+
+function renderBase(){
+  const t=T[lang];let h='';
+  // Road — offset outward from parcel edges P6→P5→P3→P2
+  function offsetOutward(pts,d){
+    // offset each segment outward (away from parcel interior) by d meters
+    const out=[];
+    for(let i=0;i<pts.length-1;i++){
+      const[x1,y1]=pts[i],[x2,y2]=pts[i+1];
+      const dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy);
+      const nx=-dy/len,ny=dx/len;// outward normal (away from parcel center)
+      out.push([x1+nx*d,y1+ny*d],[x2+nx*d,y2+ny*d]);
+    }
+    return out;
+  }
+  const roadW=3.5;// road width in meters
+  const roadPts=[P6,P5,P4,P3,P2];
+  const roadOuter=offsetOutward(roadPts,roadW);
+  // Build polygon: inner edge (P6→P5→P3→P2) then outer edge reversed
+  const roadPoly=[...roadPts,...roadOuter.reverse()];
+  h+=`<polygon points="${ps(roadPoly)}" fill="#999" opacity=".2"/>`;
+  // Road dashed center line
+  let rp='M'+roadPts.map(p=>{const s=S(p[0],p[1]);return s[0].toFixed(1)+','+s[1].toFixed(1)}).join(' L');
+  h+=`<path d="${rp}" fill="none" stroke="#777" stroke-width="1" opacity=".4" stroke-dasharray="6,4" stroke-linecap="round"/>`;
+  const rl=S(8,44);h+=`<text x="${rl[0]}" y="${rl[1]}" font-size="9" font-weight="600" fill="#666" letter-spacing="2" transform="rotate(-5,${rl[0]},${rl[1]})">${t.sv_road}</text>`;
+  // Neighbors — green highlight on P6→P1 and P1→P2
+  const nbW=2.5;// neighbor strip width in meters
+  const nb1Pts=[P6,P1];
+  const nb1Outer=offsetOutward(nb1Pts,-nbW);
+  const nb1Poly=[...nb1Pts,...nb1Outer.reverse()];
+  const nb2Pts=[P1,P2];
+  const nb2Outer=offsetOutward(nb2Pts,-nbW);
+  const nb2Poly=[...nb2Pts,...nb2Outer.reverse()];
+  h+=`<polygon points="${ps(nb1Poly)}" fill="#4CAF50" opacity=".15"/>`;
+  h+=`<polygon points="${ps(nb2Poly)}" fill="#4CAF50" opacity=".15"/>`;
+  // Neighbor labels
+  const nb1mid=S((P6[0]+P1[0])/2-2.5,(P6[1]+P1[1])/2);
+  const nb1ang=Math.atan2(P1[1]-P6[1],P1[0]-P6[0])*180/Math.PI;
+  h+=`<text x="${nb1mid[0]}" y="${nb1mid[1]}" font-size="8" font-weight="600" fill="#2E7D32" letter-spacing="1" text-anchor="middle" transform="rotate(${-nb1ang},${nb1mid[0]},${nb1mid[1]})">KOMŞU</text>`;
+  const nb2mid=S((P1[0]+P2[0])/2,(P1[1]+P2[1])/2-2);
+  const nb2ang=Math.atan2(P2[1]-P1[1],P2[0]-P1[0])*180/Math.PI;
+  h+=`<text x="${nb2mid[0]}" y="${nb2mid[1]}" font-size="8" font-weight="600" fill="#2E7D32" letter-spacing="1" text-anchor="middle" transform="rotate(${-nb2ang},${nb2mid[0]},${nb2mid[1]})">KOMŞU</text>`;
+  // Lots rendered dynamically in renderVillas()
+  // Buildable
+  h+=`<polygon points="${ps(buildM)}" fill="none" stroke="var(--sb)" stroke-width="1.2" stroke-dasharray="5,4" opacity=".5"/>`;
+  const sb5=S(20,39);h+=`<text x="${sb5[0]}" y="${sb5[1]}" font-size="8" fill="var(--hint)" text-anchor="middle">${t.sv_sb5}</text>`;
+  const sb3=S(4,10);h+=`<text x="${sb3[0]}" y="${sb3[1]}" font-size="8" fill="var(--hint)" text-anchor="middle" transform="rotate(-66,${sb3[0]},${sb3[1]})">${t.sv_sb3}</text>`;
+  // Parcel
+  h+=`<polygon points="${ps(parcelM)}" fill="none" stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round" opacity=".7"/>`;
+  // Lot dividers rendered dynamically in renderVillas()
+  // Lot labels rendered dynamically in renderVillas()
+  // Vertices
+  const vs=[{n:'P1',m:P1,o:[0,15]},{n:'P2',m:P2,o:[10,14]},{n:'P3',m:P3,o:[8,-8]},{n:'P4',m:P4,o:[5,-10]},{n:'P5',m:P5,o:[-5,-10]},{n:'P6',m:P6,o:[-16,0]}];
+  for(const v of vs){const s=S(v.m[0],v.m[1]);h+=`<circle cx="${s[0]}" cy="${s[1]}" r="3" fill="var(--text)" opacity=".5"/><text x="${s[0]+v.o[0]}" y="${s[1]+v.o[1]}" text-anchor="middle" font-size="10" font-weight="600" fill="var(--muted)">${v.n}</text>`}
+  // N + scale
+  h+=`<g transform="rotate(-4,550,515)"><line x1="550" y1="530" x2="550" y2="498" stroke="var(--text)" stroke-width="1.5"/><polygon points="550,493 545,502 555,502" fill="var(--text)"/></g><text x="550" y="543" text-anchor="middle" font-size="10" font-weight="600" fill="var(--muted)">N</text>`;
+  const tm=10*sc;h+=`<line x1="30" y1="555" x2="${30+tm}" y2="555" stroke="var(--text)" stroke-width="1.5"/><line x1="30" y1="551" x2="30" y2="559" stroke="var(--text)" stroke-width="1.5"/><line x1="${30+tm}" y1="551" x2="${30+tm}" y2="559" stroke="var(--text)" stroke-width="1.5"/><text x="${30+tm/2}" y="550" text-anchor="middle" font-size="9" fill="var(--muted)">10 m</text>`;
+  return h;
+}
+
+function renderVillas(){
+  const t=T[lang];let h='';
+  // Dynamic Voronoi lots
+  dynamicLots=voronoiLots();
+  const lotFills=['var(--lot1f)','var(--lot2f)','var(--lot3f)'];
+  const lotColors=['var(--lot1)','var(--lot2)','var(--lot3)'];
+  const lotKeys=['sv_lA','sv_lB','sv_lC'];
+  for(let i=0;i<3;i++){
+    if(dynamicLots[i]&&dynamicLots[i].length>=3){
+      h+=`<polygon points="${ps(dynamicLots[i])}" fill="${lotFills[i]}" opacity=".6"/>`;
+      // Lot divider edges (draw polygon border as dashed)
+      h+=`<polygon points="${ps(dynamicLots[i])}" fill="none" stroke="#888" stroke-width=".5" stroke-dasharray="4,6" opacity=".3"/>`;
+      // Lot label at centroid
+      const c=polyCentroid(dynamicLots[i]);
+      const cs=S(c[0],c[1]);
+      h+=`<text x="${cs[0]}" y="${cs[1]}" text-anchor="middle" font-size="11" font-weight="700" fill="${lotColors[i]}" opacity=".25">${t[lotKeys[i]]}</text>`;
+    }
+  }
+  for(const v of villas){
+    const corners=rotCorners(v.cx,v.cy,vw,vh,v.angle);
+    const svgC=corners.map(c=>S(c[0],c[1]));
+    h+=`<polygon points="${svgC.map(s=>s[0].toFixed(1)+','+s[1].toFixed(1)).join(' ')}" fill="${v.fill}" stroke="${v.stroke}" stroke-width="1.3" class="villa-body" data-villa="${v.id}"/>`;
+    const cs=S(v.cx,v.cy);
+    h+=`<text x="${cs[0]}" y="${cs[1]-4}" text-anchor="middle" font-size="10" font-weight="700" fill="${v.text}" pointer-events="none">${t.sv_v} ${v.id}</text>`;
+    h+=`<text x="${cs[0]}" y="${cs[1]+9}" text-anchor="middle" font-size="8.5" font-weight="500" fill="${v.text}" pointer-events="none">${(vw*vh).toFixed(1).replace('.',',')} m²</text>`;
+    // Rotate handle
+    const tr=svgC[1];
+    h+=`<circle cx="${tr[0]}" cy="${tr[1]}" r="9" fill="white" stroke="${v.stroke}" stroke-width="1" class="rotate-handle" data-villa="${v.id}" opacity=".7"/>`;
+    h+=`<text x="${tr[0]}" y="${tr[1]+4}" text-anchor="middle" font-size="10" fill="${v.stroke}" pointer-events="none" opacity=".8">↻</text>`;
+  }
+  return h;
+}
+
+function renderDimensions(){
+  let h='';
+  // Parcel edges (green)
+  const edges=[{a:P1,b:P2,l:'33.0m',o:18},{a:P2,b:P3,l:'29.8m',o:18},{a:P3,b:P4,l:'6.3m',o:12},{a:P4,b:P5,l:'13.6m',o:14},{a:P5,b:P6,l:'24.3m',o:14},{a:P6,b:P1,l:'29.3m',o:-18}];
+  for(const e of edges) h+=dimOff(e.a,e.b,e.l,'var(--dg)','var(--dgb)',e.o);
+  // Villa own dims (red)
+  for(const v of villas){
+    const c=rotCorners(v.cx,v.cy,vw,vh,v.angle);
+    h+=dimOff(c[0],c[1],vw+'m','var(--dr)','var(--drb)',-10);
+    h+=dimOff(c[0],c[3],vh+'m','var(--dr)','var(--drb)',-10);
+  }
+  // Villa-to-villa (blue)
+  for(const[i,j]of[[0,1],[0,2],[1,2]]){
+    const m=v2v(villas[i],villas[j]);
+    h+=dimSVG(m.from,m.to,m.d.toFixed(1)+'m','var(--db)','var(--dbb)');
+  }
+  // Villa-to-road (red)
+  const roadEdges=[[P5,P6],[P5,P4],[P4,P3],[P3,P2]];
+  for(const v of villas){
+    let best={d:999};for(const[a,b]of roadEdges){const r=v2edge(v,a,b);if(r.d<best.d)best=r}
+    h+=dimSVG(best.from,best.to,best.d.toFixed(1)+'m','var(--dr)','var(--drb)');
+  }
+  // Villa-to-neighbor (red)
+  const nbEdges=[[P6,P1],[P1,P2]];
+  for(const v of villas){
+    let best={d:999};for(const[a,b]of nbEdges){const r=v2edge(v,a,b);if(r.d<best.d)best=r}
+    h+=dimSVG(best.from,best.to,best.d.toFixed(1)+'m','var(--dr)','var(--drb)');
+  }
+  return h;
+}
+
+// ─── Compose layers ───
+// We cache the static base HTML since it never changes (only on lang switch)
+let baseCache='';
+
+function renderLight(){
+  if(!baseCache) baseCache=renderBase();
+  document.getElementById('map').innerHTML = baseCache + renderVillas();
+}
+
+function renderFull(){
+  baseCache=renderBase();
+  document.getElementById('map').innerHTML = baseCache + renderVillas() + renderDimensions();
+}
+
+function showSpinnerThenRender(){
+  const sp = document.getElementById('spinner');
+  sp.classList.add('show');
+  requestAnimationFrame(()=>{
+    requestAnimationFrame(()=>{
+      renderFull();
+      updateStats();
+      sp.classList.remove('show');
+    });
+  });
+}
+
+// ─── Drag & Rotate (bound ONCE via event delegation) ───
+let active=null,mode=null,startX,startY,origCx,origCy,origAngle;
+
+function getPos(e){
+  const svg=document.getElementById('map');
+  const r=svg.getBoundingClientRect();
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  const cy=e.touches?e.touches[0].clientY:e.clientY;
+  return M((cx-r.left)/r.width*600,(cy-r.top)/r.height*600);
+}
+
+function onDown(e){
+  const target=e.target;
+  const vid=target.getAttribute('data-villa');
+  if(!vid)return;
+  e.preventDefault();
+  active=villas.find(v=>v.id===vid);if(!active)return;
+  mode=target.classList.contains('rotate-handle')?'rotate':'drag';
+  const[mx,my]=getPos(e);
+  startX=mx;startY=my;origCx=active.cx;origCy=active.cy;origAngle=active.angle;
+  renderLight();
+}
+
+function onMove(e){
+  if(!active)return;
+  e.preventDefault();
+  const[mx,my]=getPos(e);
+  if(mode==='drag'){
+    const ncx=origCx+(mx-startX),ncy=origCy+(my-startY);
+    if(villaFits(ncx,ncy,active.angle)&&canPlace(active.id,ncx,ncy,active.angle)){active.cx=ncx;active.cy=ncy;renderLight()}
+  }else{
+    const a=Math.atan2(my-active.cy,mx-active.cx)-Math.atan2(startY-origCy,startX-origCx)+origAngle;
+    if(villaFits(active.cx,active.cy,a)&&canPlace(active.id,active.cx,active.cy,a)){active.angle=a;renderLight()}
+  }
+}
+
+function onUp(){
+  if(!active)return;
+  active=null;mode=null;
+  showSpinnerThenRender();
+}
+
+// Bind ONCE on the SVG element — never re-bound
+const svgEl=document.getElementById('map');
+svgEl.addEventListener('mousedown',onDown);
+svgEl.addEventListener('mousemove',onMove);
+svgEl.addEventListener('mouseup',onUp);
+svgEl.addEventListener('mouseleave',onUp);
+svgEl.addEventListener('touchstart',onDown,{passive:false});
+svgEl.addEventListener('touchmove',onMove,{passive:false});
+svgEl.addEventListener('touchend',onUp);
+
+const PARCEL_AREA=1218;
+const VILLA_COUNT=3;
+const floorLabels=['Tek katlı','İki katlı','Üç katlı','Dört katlı','Beş katlı'];
+
+function getTaks(){return parseFloat(document.getElementById('taksLimit').value)||0.30}
+function getKaks(){return parseFloat(document.getElementById('kaksLimit').value)||0.60}
+function getFloors(){return parseInt(document.getElementById('floorCount').value)||2}
+
+function maxFootprintFromTaks(){return(getTaks()*PARCEL_AREA)/VILLA_COUNT}
+function maxTotalFromKaks(){return(getKaks()*PARCEL_AREA)/VILLA_COUNT}
+
+function updateVillaSize(){
+  const wIn=document.getElementById('villaW');
+  const hIn=document.getElementById('villaH');
+  const nw=parseFloat(wIn.value),nh=parseFloat(hIn.value);
+  if(isNaN(nw)||isNaN(nh)||nw<1||nh<1)return;
+  // Check TAKS limit
+  const maxFp=maxFootprintFromTaks();
+  if(nw*nh>maxFp){return}
+  // Check KAKS limit
+  const maxTotal=maxTotalFromKaks();
+  if(nw*nh*getFloors()>maxTotal){return}
+  const oldW=vw,oldH=vh;
+  const oldPositions=villas.map(v=>({cx:v.cx,cy:v.cy,angle:v.angle}));
+  vw=nw;vh=nh;
+  // Try to nudge villas toward buildable center if they don't fit
+  const bcx=buildM.reduce((s,p)=>s+p[0],0)/buildM.length;
+  const bcy=buildM.reduce((s,p)=>s+p[1],0)/buildM.length;
+  let ok=true;
+  for(const v of villas){
+    if(!canPlace(v.id,v.cx,v.cy,v.angle)){
+      // Try nudging toward buildable center
+      let placed=false;
+      for(let step=0.5;step<=15;step+=0.5){
+        const dx=bcx-v.cx,dy=bcy-v.cy,d=Math.hypot(dx,dy);
+        if(d<0.01)break;
+        const ncx=v.cx+(dx/d)*step,ncy=v.cy+(dy/d)*step;
+        if(canPlace(v.id,ncx,ncy,v.angle)){v.cx=ncx;v.cy=ncy;placed=true;break}
+      }
+      if(!placed){ok=false;break}
+    }
+  }
+  if(!ok){
+    vw=oldW;vh=oldH;
+    villas.forEach((v,i)=>{v.cx=oldPositions[i].cx;v.cy=oldPositions[i].cy;v.angle=oldPositions[i].angle});
+    wIn.value=oldW;hIn.value=oldH;return;
+  }
+  updateStats();
+  baseCache='';
+  renderFull();
+}
+
+function updateTaksKaks(){
+  updateStats();
+  // Find the strictest max footprint from TAKS and KAKS
+  const maxFpTaks=maxFootprintFromTaks();
+  const maxFpKaks=maxTotalFromKaks()/getFloors();
+  const maxFp=Math.min(maxFpTaks,maxFpKaks);
+  if(vw*vh>maxFp){
+    const ratio=Math.sqrt(maxFp/(vw*vh));
+    const nw=Math.floor(vw*ratio*10)/10;
+    const nh=Math.floor(vh*ratio*10)/10;
+    document.getElementById('villaW').value=nw;
+    document.getElementById('villaH').value=nh;
+    updateVillaSize();
+  }
+}
+
+function updateStats(){
+  const floors=getFloors();
+  const area=vw*vh;
+  const totalArea=area*floors;
+  const areaStr=area.toFixed(1).replace('.',',');
+  const totalStr=totalArea.toFixed(0);
+  const vals=document.querySelectorAll('.stats-row .stat .val');
+  vals[3].textContent=areaStr;
+  vals[4].textContent='~'+totalStr;
+  // Update sidebar lot details with dynamic Voronoi areas
+  const details=document.querySelectorAll('.lot-detail');
+  const lotAreaEls=document.querySelectorAll('.lot-area');
+  details.forEach((el,i)=>{
+    const lotA=dynamicLots[i]&&dynamicLots[i].length>=3?polyArea(dynamicLots[i]):0;
+    const garden=Math.max(0,lotA-area).toFixed(0);
+    el.textContent='Villa '+areaStr+' + bahçe '+garden+' m²';
+    if(lotAreaEls[i]) lotAreaEls[i].textContent=lotA.toFixed(0)+' m²';
+  });
+  // Update per-lot stat
+  const avgLot=dynamicLots.reduce((s,l)=>s+(l.length>=3?polyArea(l):0),0)/VILLA_COUNT;
+  vals[2].textContent='~'+avgLot.toFixed(0);
+  // Update tasarım notu
+  const floorLabel=floorLabels[Math.min(floors-1,4)]||floors+' katlı';
+  const dnEl=document.getElementById('designNote');
+  if(dnEl) dnEl.innerHTML='<strong>'+floorLabel+' villa</strong>: '+areaStr+' m² taban × '+floors+' = ~'+totalStr+' m² yaşam alanı.';
+  // Update TAKS/KAKS info
+  const currentTaks=(area*VILLA_COUNT/PARCEL_AREA);
+  const currentKaks=(totalArea*VILLA_COUNT/PARCEL_AREA);
+  const taksLim=getTaks(),kaksLim=getKaks();
+  const maxFp=maxFootprintFromTaks();
+  const maxTotal=maxTotalFromKaks();
+  const maxLiving=maxTotal;// max total construction per villa (all floors)
+  document.getElementById('taksVal').textContent=currentTaks.toFixed(3);
+  document.getElementById('taksVal').className='info-val '+(currentTaks>taksLim?'warn':'ok');
+  document.getElementById('taksMax').textContent=maxFp.toFixed(0)+' m²';
+  document.getElementById('kaksVal').textContent=currentKaks.toFixed(3);
+  document.getElementById('kaksVal').className='info-val '+(currentKaks>kaksLim?'warn':'ok');
+  document.getElementById('kaksMax').textContent=maxTotal.toFixed(0)+' m²';
+  document.getElementById('livingMax').textContent=maxLiving.toFixed(0)+' m²';
+}
+
+document.getElementById('villaW').addEventListener('input',updateVillaSize);
+document.getElementById('villaH').addEventListener('input',updateVillaSize);
+document.getElementById('floorCount').addEventListener('input',function(){
+  // Check KAKS limit with new floor count
+  const maxTotal=maxTotalFromKaks();
+  if(vw*vh*getFloors()>maxTotal){
+    // Scale down villa to fit
+    const maxFp=maxTotal/getFloors();
+    const ratio=Math.sqrt(maxFp/(vw*vh));
+    const nw=Math.floor(vw*ratio*10)/10;
+    const nh=Math.floor(vh*ratio*10)/10;
+    document.getElementById('villaW').value=nw;
+    document.getElementById('villaH').value=nh;
+    updateVillaSize();
+    return;
+  }
+  updateStats();baseCache='';renderFull();
+});
+document.getElementById('taksLimit').addEventListener('input',updateTaksKaks);
+document.getElementById('kaksLimit').addEventListener('input',updateTaksKaks);
+
+function downloadImage(){
+  const svg=document.getElementById('map');
+  // Resolve CSS variables to actual colors
+  const cs=getComputedStyle(document.documentElement);
+  let svgData=new XMLSerializer().serializeToString(svg);
+  // Replace all var(--xxx) with computed values
+  svgData=svgData.replace(/var\(--([^)]+)\)/g,function(_,name){
+    return cs.getPropertyValue('--'+name).trim()||_;
+  });
+  // Ensure xmlns
+  if(!svgData.includes('xmlns=')) svgData=svgData.replace('<svg','<svg xmlns="http://www.w3.org/2000/svg"');
+  // Add font style
+  const styleTag='<style>text{font-family:sans-serif}</style>';
+  svgData=svgData.replace('>','>'+styleTag);
+  const canvas=document.createElement('canvas');
+  const scale=3;
+  canvas.width=600*scale;
+  canvas.height=600*scale;
+  const ctx=canvas.getContext('2d');
+  ctx.fillStyle='#F7F6F3';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  const img=new Image();
+  const blob=new Blob([svgData],{type:'image/svg+xml;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  img.onload=function(){
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    URL.revokeObjectURL(url);
+    const a=document.createElement('a');
+    a.download='arazi-plani-'+new Date().toISOString().slice(0,10)+'.png';
+    a.href=canvas.toDataURL('image/png');
+    a.click();
+  };
+  img.onerror=function(){
+    // Fallback: open SVG in new tab
+    const svgBlob=new Blob([svgData],{type:'image/svg+xml'});
+    window.open(URL.createObjectURL(svgBlob));
+  };
+  img.src=url;
+}
+
+// ─── Fullscreen zoom & pan ───
+const defaultVB={x:0,y:0,w:600,h:600};
+let vb={...defaultVB};
+let isFullscreen=false;
+let isPanning=false,panStartX,panStartY,vbStartX,vbStartY;
+
+function applyViewBox(){
+  const svg=document.getElementById('map');
+  if(isFullscreen){
+    svg.setAttribute('viewBox',`${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  }else{
+    svg.setAttribute('viewBox',`${defaultVB.x} ${defaultVB.y} ${defaultVB.w} ${defaultVB.h}`);
+  }
+}
+
+function zoom(dir){
+  const factor=dir>0?0.8:1.25;
+  const nw=Math.max(150,Math.min(1200,vb.w*factor));
+  const nh=Math.max(145,Math.min(1160,vb.h*factor));
+  // Zoom toward center
+  vb.x+=(vb.w-nw)/2;
+  vb.y+=(vb.h-nh)/2;
+  vb.w=nw;vb.h=nh;
+  applyViewBox();
+}
+
+function onPanStart(e){
+  if(!isFullscreen||active)return;// don't pan while dragging villa
+  if(e.target.closest('.villa-body,.rotate-handle'))return;
+  isPanning=true;
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  const cy=e.touches?e.touches[0].clientY:e.clientY;
+  panStartX=cx;panStartY=cy;vbStartX=vb.x;vbStartY=vb.y;
+}
+function onPanMove(e){
+  if(!isPanning)return;
+  e.preventDefault();
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  const cy=e.touches?e.touches[0].clientY:e.clientY;
+  const svg=document.getElementById('map');
+  const rect=svg.getBoundingClientRect();
+  const scaleX=vb.w/rect.width,scaleY=vb.h/rect.height;
+  vb.x=vbStartX-(cx-panStartX)*scaleX;
+  vb.y=vbStartY-(cy-panStartY)*scaleY;
+  applyViewBox();
+}
+function onPanEnd(){isPanning=false}
+
+function toggleFullscreen(){
+  const wrap=document.getElementById('mapWrap');
+  const btn=document.getElementById('fsBtn');
+  const zc=document.getElementById('zoomControls');
+  isFullscreen=!isFullscreen;
+  wrap.classList.toggle('fullscreen',isFullscreen);
+  document.body.classList.toggle('fs-active',isFullscreen);
+  if(isFullscreen){
+    btn.textContent='✕';
+    vb={...defaultVB};
+    zc.style.display='flex';
+  }else{
+    btn.textContent='Tam Ekran';
+    zc.style.display='none';
+  }
+  applyViewBox();
+  baseCache='';
+  renderFull();
+}
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape'&&isFullscreen) toggleFullscreen();
+});
+// Bind pan events on SVG
+const mapEl=document.getElementById('map');
+mapEl.addEventListener('mousedown',onPanStart);
+mapEl.addEventListener('mousemove',onPanMove);
+mapEl.addEventListener('mouseup',onPanEnd);
+mapEl.addEventListener('mouseleave',onPanEnd);
+mapEl.addEventListener('touchstart',onPanStart,{passive:false});
+mapEl.addEventListener('touchmove',onPanMove,{passive:false});
+mapEl.addEventListener('touchend',onPanEnd);
+// Mouse wheel zoom in fullscreen (throttled for trackpad)
+let wheelAccum=0;
+let wheelTimer=null;
+mapEl.addEventListener('wheel',function(e){
+  if(!isFullscreen)return;
+  e.preventDefault();
+  wheelAccum+=e.deltaY;
+  if(wheelTimer)return;
+  wheelTimer=setTimeout(function(){
+    if(Math.abs(wheelAccum)>30){
+      zoom(wheelAccum<0?1:-1);
+    }
+    wheelAccum=0;
+    wheelTimer=null;
+  },80);
+},{passive:false});
+
+applyLang('tr');
+renderFull();
+updateStats();
+
+// ═══════════════════════════════════════════════════
+// TAB SWITCHING
+// ═══════════════════════════════════════════════════
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click',function(){
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+    this.classList.add('active');
+    document.getElementById('tab-'+this.dataset.tab).classList.add('active');
+    if(this.dataset.tab==='parcelled'&&!pInitialized) pInit();
+  });
+});
+
+// ═══════════════════════════════════════════════════
+// PARCELLED MODE
+// ═══════════════════════════════════════════════════
+let pInitialized=false;
+
+// Parcelled villas — each confined to its strip
+const pVillas=[
+  {id:'A',cx:0,cy:0,angle:0,fill:'var(--lot1v)',stroke:'var(--lot1)',text:'var(--lot1)'},
+  {id:'B',cx:0,cy:0,angle:0,fill:'var(--lot2v)',stroke:'var(--lot2)',text:'var(--lot2)'},
+  {id:'C',cx:0,cy:0,angle:0,fill:'var(--lot3v)',stroke:'var(--lot3)',text:'var(--lot3)'},
+];
+
+// Three sweep directions (division lines are perpendicular to the sweep axis)
+// Direction 1: along P2→P3 (⊥ P3–P2)
+const pDir1x=P3[0]-P2[0], pDir1y=P3[1]-P2[1], pDir1L=Math.hypot(pDir1x,pDir1y);
+const pSweep1=[pDir1x/pDir1L, pDir1y/pDir1L];
+// Direction 2: along P6→P4 (⊥ P6–P4)
+const pDir2x=P4[0]-P6[0], pDir2y=P4[1]-P6[1], pDir2L=Math.hypot(pDir2x,pDir2y);
+const pSweep2=[pDir2x/pDir2L, pDir2y/pDir2L];
+// Direction 3: perpendicular to P1→P6 edge (∥ P1–P6)
+const pDir3x=-(P6[1]-P1[1]), pDir3y=(P6[0]-P1[0]), pDir3L=Math.hypot(pDir3x,pDir3y);
+const pSweep3=[pDir3x/pDir3L, pDir3y/pDir3L];
+// Direction 4: sweep along P1→P2 so division lines are ⊥ P1–P2
+const pDir4x=P2[0]-P1[0], pDir4y=P2[1]-P1[1], pDir4L=Math.hypot(pDir4x,pDir4y);
+const pSweep4=[pDir4x/pDir4L, pDir4y/pDir4L];
+
+let pRoadNx=pSweep1[0], pRoadNy=pSweep1[1];
+let pOptimalAngle=null; // cached result of optimization
+
+function getDivDir(){
+  const el=document.querySelector('#pDivDirGroup .toggle-btn.active');
+  return el?el.dataset.dir:'p3p2';
+}
+
+// Measure how square-like a polygon is: aspect ratio of extents along two axes
+// Returns ratio >= 1 (1.0 = perfect square)
+function polyAspectRatio(poly,axX,axY){
+  if(!poly||poly.length<3) return Infinity;
+  const perpAx=[-axY,axX];
+  const projs1=poly.map(p=>p[0]*axX+p[1]*axY);
+  const projs2=poly.map(p=>p[0]*perpAx[0]+p[1]*perpAx[1]);
+  const ext1=Math.max(...projs1)-Math.min(...projs1);
+  const ext2=Math.max(...projs2)-Math.min(...projs2);
+  if(ext1<0.1||ext2<0.1) return Infinity;
+  return ext1>ext2?ext1/ext2:ext2/ext1;
+}
+
+// Find the sweep angle that produces the most square-like Villa C
+function findOptimalSweepAngle(){
+  // Angle range: between P1→P2 (~0.415 rad) and P6→P4 (~0.56 rad), with margin
+  const ang1=Math.atan2(pSweep4[1],pSweep4[0]); // P1→P2 direction
+  const ang2=Math.atan2(pSweep2[1],pSweep2[0]); // P6→P4 direction
+  const loAng=Math.min(ang1,ang2)-0.15;
+  const hiAng=Math.max(ang1,ang2)+0.15;
+
+  const savedNx=pRoadNx, savedNy=pRoadNy;
+  let bestAngle=(loAng+hiAng)/2, bestRatio=Infinity;
+
+  // Coarse search
+  const steps=40;
+  for(let i=0;i<=steps;i++){
+    const ang=loAng+(hiAng-loAng)*i/steps;
+    const ratio=evalAngle(ang);
+    if(ratio<bestRatio){bestRatio=ratio;bestAngle=ang}
+  }
+  // Fine search around best
+  const fine=0.02;
+  for(let i=-10;i<=10;i++){
+    const ang=bestAngle+fine*i/10;
+    const ratio=evalAngle(ang);
+    if(ratio<bestRatio){bestRatio=ratio;bestAngle=ang}
+  }
+
+  pRoadNx=savedNx;pRoadNy=savedNy;
+  return bestAngle;
+
+  function evalAngle(ang){
+    pRoadNx=Math.cos(ang);pRoadNy=Math.sin(ang);
+    const perpX=-pRoadNy, perpY=pRoadNx;
+    const mode=getDivMode();
+    let t1,t2;
+    if(mode==='buildable'){
+      [t1,t2]=findEqualBuildableDivisions();
+    } else {
+      [t1,t2]=findEqualParcelDivisions();
+    }
+    const projs=parcelM.map(p=>roadProj(p));
+    const tMin=Math.min(...projs),tMax=Math.max(...projs);
+    const bands=[
+      clipBuildBand(tMin,t1-DIV_SETBACK),
+      clipBuildBand(t1+DIV_SETBACK,t2-DIV_SETBACK),
+      clipBuildBand(t2+DIV_SETBACK,tMax)
+    ];
+    const roadCx=(P2[0]+P3[0]+P4[0]+P5[0]+P6[0])/5;
+    const roadCy=(P2[1]+P3[1]+P4[1]+P5[1]+P6[1])/5;
+    let worstRatio=0;
+    for(const bp of bands){
+      if(!bp||bp.length<3||polyArea(bp)<VILLA_AREA) return Infinity;
+      const c=polyCentroid(bp);
+      const dot=(roadCx-c[0])*perpX+(roadCy-c[1])*perpY;
+      const nx=dot>=0?perpX:-perpX, ny=dot>=0?perpY:-perpY;
+      const villa=clipToArea(bp,VILLA_AREA,nx,ny);
+      const r=polyAspectRatio(villa,pRoadNx,pRoadNy);
+      if(r>worstRatio) worstRatio=r;
+    }
+    return worstRatio;
+  }
+}
+
+function updateSweepDir(){
+  const dir=getDivDir();
+  if(dir==='p6p4'){pRoadNx=pSweep2[0];pRoadNy=pSweep2[1]}
+  else if(dir==='p1p2'){pRoadNx=pSweep3[0];pRoadNy=pSweep3[1]}
+  else if(dir==='perpp1p2'){pRoadNx=pSweep4[0];pRoadNy=pSweep4[1]}
+  else if(dir==='optimum'||dir==='optimum2'){
+    if(pOptimalAngle===null) pOptimalAngle=findOptimalSweepAngle();
+    pRoadNx=Math.cos(pOptimalAngle);pRoadNy=Math.sin(pOptimalAngle);
+  }
+  else if(dir==='optimum3'){
+    // Optimum3 uses radial partition, not sweep — set dummy sweep to avoid errors
+    pRoadNx=pSweep1[0];pRoadNy=pSweep1[1];
+  }
+  else{pRoadNx=pSweep1[0];pRoadNy=pSweep1[1]}
+}
+
+// Project a point onto sweep axis
+function roadProj(p){return(p[0]-P1[0])*pRoadNx+(p[1]-P1[1])*pRoadNy}
+
+// Clip parcel to band between two projection values [tLow, tHigh] along sweep axis
+function parcelSliceBand(tLow,tHigh){
+  let poly=[...parcelM];
+  const phx=P1[0]+tHigh*pRoadNx, phy=P1[1]+tHigh*pRoadNy;
+  poly=clipPolyByLine(poly,phx,phy,pRoadNx,pRoadNy);
+  const plx=P1[0]+tLow*pRoadNx, ply=P1[1]+tLow*pRoadNy;
+  poly=clipPolyByLine(poly,plx,ply,-pRoadNx,-pRoadNy);
+  return poly;
+}
+
+const DIV_SETBACK=3;
+
+function clipBuildBand(tLow,tHigh){
+  let poly=[...buildM];
+  const phx=P1[0]+tHigh*pRoadNx,phy=P1[1]+tHigh*pRoadNy;
+  poly=clipPolyByLine(poly,phx,phy,pRoadNx,pRoadNy);
+  const plx=P1[0]+tLow*pRoadNx,ply=P1[1]+tLow*pRoadNy;
+  poly=clipPolyByLine(poly,plx,ply,-pRoadNx,-pRoadNy);
+  return poly;
+}
+
+function buildAreaForDiv(t,tMin){
+  // Buildable area from tMin to t (with setback on the t side)
+  const bp=clipBuildBand(tMin,t-DIV_SETBACK);
+  return bp.length>=3?polyArea(bp):0;
+}
+
+function findEqualParcelDivisions(){
+  const totalArea=polyArea(parcelM);
+  const targetArea=totalArea/3;
+  const projs=parcelM.map(p=>roadProj(p));
+  const tMin=Math.min(...projs),tMax=Math.max(...projs);
+
+  let lo=tMin,hi=tMax,t1;
+  for(let i=0;i<60;i++){
+    const mid=(lo+hi)/2;
+    const slice=parcelSliceBand(tMin,mid);
+    const area=slice.length>=3?polyArea(slice):0;
+    if(area<targetArea) lo=mid; else hi=mid;
+    t1=mid;
+  }
+
+  lo=t1;hi=tMax;let t2;
+  for(let i=0;i<60;i++){
+    const mid=(lo+hi)/2;
+    const slice=parcelSliceBand(tMin,mid);
+    const area=slice.length>=3?polyArea(slice):0;
+    if(area<2*targetArea) lo=mid; else hi=mid;
+    t2=mid;
+  }
+  return[t1,t2];
+}
+
+function findEqualBuildableDivisions(){
+  const projs=parcelM.map(p=>roadProj(p));
+  const tMin=Math.min(...projs),tMax=Math.max(...projs);
+  const minGap=2*DIV_SETBACK+2; // minimum distance between t1 and t2 (8m)
+
+  function buildAreas(t1,t2){
+    const bA=clipBuildBand(tMin,t1-DIV_SETBACK);
+    const bB=clipBuildBand(t1+DIV_SETBACK,t2-DIV_SETBACK);
+    const bC=clipBuildBand(t2+DIV_SETBACK,tMax);
+    return[bA.length>=3?polyArea(bA):0,bB.length>=3?polyArea(bB):0,bC.length>=3?polyArea(bC):0];
+  }
+
+  // For a given t1, find t2 that makes B area == C area
+  // As t2 increases: bB grows, bC shrinks. So if bB>bC → t2 too high → hi=mid
+  function findT2forEqual_BC(t1){
+    let lo=t1+minGap, hi=tMax-DIV_SETBACK-0.5;
+    if(lo>=hi) return(t1+tMax)/2;
+    for(let i=0;i<40;i++){
+      const mid=(lo+hi)/2;
+      const[,aB,aC]=buildAreas(t1,mid);
+      if(aB>aC) hi=mid; else lo=mid;
+    }
+    return(lo+hi)/2;
+  }
+
+  // Binary search t1: increase t1 → A grows, B+C shrink
+  // We want A == B (since inner search keeps B==C)
+  let lo1=tMin+DIV_SETBACK+0.5, hi1=tMax-minGap-DIV_SETBACK-0.5;
+  if(lo1>=hi1) return findEqualParcelDivisions();
+  for(let i=0;i<40;i++){
+    const t1=(lo1+hi1)/2;
+    const t2=findT2forEqual_BC(t1);
+    const[aA,aB]=buildAreas(t1,t2);
+    if(aA<aB) lo1=t1; else hi1=t1;
+  }
+  const t1=(lo1+hi1)/2;
+  const t2=findT2forEqual_BC(t1);
+  return[t1,t2];
+}
+
+let pDivT1=0,pDivT2=0;
+let pParcels=[];
+let pBuildParcels=[];
+
+function getDivMode(){
+  const el=document.querySelector('#pDivModeGroup .toggle-btn.active');
+  return el?el.dataset.mode:'parcel';
+}
+
+// ─── Radial (Y-shaped) partition for Optimum 3 ───
+let pRadialCenter=null, pRadialEdgePts=null; // cached
+
+// Split parcel into sector from center through two boundary points (going CCW)
+function radialSector(center,bPt1,bPt2,poly){
+  // Clip polygon by two half-planes: keep CCW sector from bPt1 to bPt2
+  // Half-plane 1: right side of center→bPt1 line
+  let dx1=bPt1[0]-center[0],dy1=bPt1[1]-center[1];
+  let nx1=dy1,ny1=-dx1; // normal pointing right of the line
+  // Half-plane 2: left side of center→bPt2 line
+  let dx2=bPt2[0]-center[0],dy2=bPt2[1]-center[1];
+  let nx2=-dy2,ny2=dx2; // normal pointing left of the line
+  let clipped=clipPolyByLine([...poly],center[0],center[1],nx1,ny1);
+  clipped=clipPolyByLine(clipped,center[0],center[1],nx2,ny2);
+  return clipped;
+}
+
+// Inset a polygon sector by setback distance (shrink by d)
+function insetPolygon(poly,d){
+  if(poly.length<3)return poly;
+  const n=poly.length;
+  // Compute inward normals for each edge, then offset
+  const edges=[];
+  for(let i=0;i<n;i++){
+    const j=(i+1)%n;
+    const dx=poly[j][0]-poly[i][0],dy=poly[j][1]-poly[i][1];
+    const len=Math.hypot(dx,dy)||1;
+    edges.push({nx:dy/len,ny:-dx/len}); // inward normal (for CCW polygon)
+  }
+  // Check winding: if area is negative, flip normals
+  const a=polyArea(poly);
+  let testA=0;
+  for(let i=0;i<n;i++){const j=(i+1)%n;testA+=poly[i][0]*poly[j][1]-poly[j][0]*poly[i][1]}
+  const ccw=testA>0;
+  if(!ccw) edges.forEach(e=>{e.nx=-e.nx;e.ny=-e.ny});
+
+  // Clip polygon by each offset edge
+  let result=[...poly];
+  for(let i=0;i<n;i++){
+    const px=poly[i][0]+edges[i].nx*d;
+    const py=poly[i][1]+edges[i].ny*d;
+    result=clipPolyByLine(result,px,py,edges[i].nx,edges[i].ny);
+    if(result.length<3)return[];
+  }
+  return result;
+}
+
+// Convexity: area / convex_hull_area (1.0 = perfectly convex)
+function convexHullArea(poly){
+  if(poly.length<3)return 0;
+  // Graham scan
+  const pts=[...poly].sort((a,b)=>a[0]-b[0]||(a[1]-b[1]));
+  const cross=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]);
+  const lower=[];
+  for(const p of pts){while(lower.length>=2&&cross(lower[lower.length-2],lower[lower.length-1],p)<=0)lower.pop();lower.push(p)}
+  const upper=[];
+  for(let i=pts.length-1;i>=0;i--){const p=pts[i];while(upper.length>=2&&cross(upper[upper.length-2],upper[upper.length-1],p)<=0)upper.pop();upper.push(p)}
+  lower.pop();upper.pop();
+  const hull=lower.concat(upper);
+  return polyArea(hull);
+}
+
+function convexity(poly){
+  if(!poly||poly.length<3)return 0;
+  const a=polyArea(poly),ch=convexHullArea(poly);
+  return ch>0?a/ch:0;
+}
+
+// Find point on parcel boundary by parameterized edge
+function pointOnEdge(edgeIdx,t){
+  const a=parcelM[edgeIdx],b=parcelM[(edgeIdx+1)%parcelM.length];
+  return[a[0]+t*(b[0]-a[0]),a[1]+t*(b[1]-a[1])];
+}
+
+// Road edges: P5→P6 (idx 5→0? no)
+// parcelM=[P1,P2,P3,P4,P5,P6], edges: P1P2(0), P2P3(1), P3P4(2), P4P5(3), P5P6(4), P6P1(5)
+// Road is P6→P5→P4→P3→P2, which is edges 4(P5P6 reversed),3(P4P5),2(P3P4),1(P2P3)
+// Neighbor edges: 5(P6P1), 0(P1P2)
+
+// Y-partition interactive state
+let yCenter=[21.1, 22.5];
+// Boundary points: [edge index, t parameter along that edge]
+// Edge 3=P4P5, edge 0=P1P2, edge 5=P6P1
+let yEdgePts=[
+  {edge:3, t:0.78, edges:[2,3,4]},  // on P6-P5-P4 road (edges 4=P5P6, 3=P4P5, 2=P3P4)
+  {edge:1, t:0.5},                   // on P2-P3 (edge 1)
+  {edge:0, t:0.999}                  // on P1-P2 (edge 0)
+];
+
+function getYBoundaryPt(idx){
+  const e=yEdgePts[idx];
+  const a=parcelM[e.edge],b=parcelM[(e.edge+1)%parcelM.length];
+  return[a[0]+e.t*(b[0]-a[0]),a[1]+e.t*(b[1]-a[1])];
+}
+
+function buildYPartition(){
+  const bp0=getYBoundaryPt(0); // on P6-P5-P4 road
+  const bp1=getYBoundaryPt(1); // on P2-P3
+  const bp2=getYBoundaryPt(2); // on P1-P2
+  const c=yCenter;
+  const e0=yEdgePts[0].edge; // which edge bp0 is on (2, 3, or 4)
+
+  // We need to trace parcel vertices between boundary points.
+  // parcelM = [P1(0), P2(1), P3(2), P4(3), P5(4), P6(5)]
+  // Edges: 0=P1→P2, 1=P2→P3, 2=P3→P4, 3=P4→P5, 4=P5→P6, 5=P6→P1
+
+  // Vertices between bp1 (edge 1, P2→P3) and bp0 (edge e0) going forward:
+  // After bp1 on edge 1: next vertices are P3(idx 2), P4(idx 3), ... up to edge e0
+  // Vertices between bp0 (edge e0) and bp2 (edge 0, P1→P2) going forward:
+  // After bp0: next vertices until P6, then P1, up to edge 0
+
+  function verticesBetween(startEdge, endEdge){
+    // Collect parcel vertices from (startEdge+1) to endEdge, wrapping around
+    const verts=[];
+    let idx=(startEdge+1)%6;
+    while(idx!==(endEdge+1)%6){
+      verts.push(parcelM[idx]);
+      idx=(idx+1)%6;
+    }
+    return verts;
+  }
+
+  // Lot A (left): c → bp0 → vertices → bp2 (P6 side, going from bp0 forward to bp2's edge)
+  // bp0 is on edge e0, bp2 is on edge 0
+  // Vertices between: from edge e0 forward to edge 0 → P5, P6 (if e0=3), or P4,P5,P6 (if e0=2), etc.
+  const vertsA=verticesBetween(e0, 5); // from bp0's edge to edge 5 (P6→P1), then bp2 is on edge 0 but we stop before
+  // Actually we need vertices from bp0's edge+1 up to and including the vertex before bp2's edge start
+  // bp2 is on edge 0 (P1→P2). The vertex at the start of edge 0 is P1 (idx 0).
+  // So we need vertices from (e0+1) up to idx 5 (P6), then also idx 0 if the path wraps...
+  // Simpler: just collect between edges
+  const loopA=verticesBetween(e0, 0); // e.g. if e0=3: P5(4), P6(5), P1(0) — but P1 is start of bp2's edge
+  // Remove last vertex if it equals the start of bp2's edge (P1)
+  // Actually we DO want P1 if bp2 is partway along edge 0
+  // Wait — let's keep it simple.
+  // Lot A = c, bp0, [vertices from e0+1 to 5], P6... actually let me just enumerate:
+
+  // Going CCW from bp0 along parcel boundary to bp2:
+  const pathA=[];
+  for(let idx=(e0+1)%6; idx!==1; idx=(idx+1)%6) pathA.push(parcelM[idx]);
+  // edge 0 starts at P1(idx 0), bp2 is on edge 0
+  const lotA=[c, bp0, ...pathA, bp2];
+
+  // Lot B (top-right): c → bp1 → vertices from edge 1 to edge e0 → bp0
+  const pathB=[];
+  for(let idx=2; idx!==(e0+1)%6; idx=(idx+1)%6) pathB.push(parcelM[idx]);
+  const lotB=[c, bp1, ...pathB, bp0];
+
+  // Lot C (bottom): c → bp2 → vertices from edge 0 to edge 1 → bp1
+  // bp2 is on edge 0, bp1 is on edge 1. Vertex between: P2 (idx 1)
+  const lotC=[c, bp2, P2, bp1];
+
+  return[lotA, lotB, lotC];
+}
+
+function findRadialPartition(){
+  const sectors=buildYPartition();
+  const areas=sectors.map(s=>polyArea(s));
+  const builds=sectors.map(s=>insetPolygon(s,3));
+  const pts=[getYBoundaryPt(0),getYBoundaryPt(1),getYBoundaryPt(2)];
+
+  return{
+    cx:yCenter[0],cy:yCenter[1],
+    pts, sectors, builds, areas
+  };
+}
+
+let pRadialResult=null;
+
+function computeParcels(){
+  updateSweepDir();
+  const dir=getDivDir();
+
+  if(dir==='optimum3'){
+    // Radial partition
+    pRadialResult=findRadialPartition();
+    if(pRadialResult){
+      pParcels=pRadialResult.sectors;
+      pBuildParcels=pRadialResult.builds;
+    } else {
+      // Fallback to equal parcel
+      const projs=parcelM.map(p=>roadProj(p));
+      const tMin=Math.min(...projs),tMax=Math.max(...projs);
+      [pDivT1,pDivT2]=findEqualParcelDivisions();
+      pParcels[0]=parcelSliceBand(tMin,pDivT1);
+      pParcels[1]=parcelSliceBand(pDivT1,pDivT2);
+      pParcels[2]=parcelSliceBand(pDivT2,tMax);
+      pBuildParcels[0]=clipBuildBand(tMin,pDivT1-DIV_SETBACK);
+      pBuildParcels[1]=clipBuildBand(pDivT1+DIV_SETBACK,pDivT2-DIV_SETBACK);
+      pBuildParcels[2]=clipBuildBand(pDivT2+DIV_SETBACK,tMax);
+    }
+    return;
+  }
+
+  pRadialResult=null;
+  const projs=parcelM.map(p=>roadProj(p));
+  const tMin=Math.min(...projs),tMax=Math.max(...projs);
+
+  if(getDivMode()==='buildable'){
+    [pDivT1,pDivT2]=findEqualBuildableDivisions();
+  } else {
+    [pDivT1,pDivT2]=findEqualParcelDivisions();
+  }
+
+  pParcels[0]=parcelSliceBand(tMin,pDivT1);
+  pParcels[1]=parcelSliceBand(pDivT1,pDivT2);
+  pParcels[2]=parcelSliceBand(pDivT2,tMax);
+
+  pBuildParcels[0]=clipBuildBand(tMin, pDivT1-DIV_SETBACK);
+  pBuildParcels[1]=clipBuildBand(pDivT1+DIV_SETBACK, pDivT2-DIV_SETBACK);
+  pBuildParcels[2]=clipBuildBand(pDivT2+DIV_SETBACK, tMax);
+}
+
+// Villa polygons: 72m² each, clipped from the buildable area shape
+const VILLA_AREA=72;
+let pVillaPolys=[[],[],[]];
+
+function clipToArea(bp, targetArea, normalX, normalY){
+  // Binary search: clip bp keeping the side toward (normalX,normalY), until area = targetArea
+  const projs=bp.map(p=>p[0]*normalX+p[1]*normalY);
+  let lo=Math.min(...projs)-1, hi=Math.max(...projs)+1;
+  for(let i=0;i<60;i++){
+    const mid=(lo+hi)/2;
+    const clipped=clipPolyByLine([...bp],mid*normalX,mid*normalY,-normalX,-normalY);
+    const a=clipped.length>=3?polyArea(clipped):0;
+    if(a>targetArea) lo=mid; else hi=mid;
+  }
+  const thresh=(lo+hi)/2;
+  return clipPolyByLine([...bp],thresh*normalX,thresh*normalY,-normalX,-normalY);
+}
+
+function computeVillaPolys(){
+  const perpX=-pRoadNy, perpY=pRoadNx;
+  // Road center as reference to determine "toward road" direction per strip
+  const roadCx=(P2[0]+P3[0]+P4[0]+P5[0]+P6[0])/5;
+  const roadCy=(P2[1]+P3[1]+P4[1]+P5[1]+P6[1])/5;
+
+  function roadSideNormal(bp){
+    const c=polyCentroid(bp);
+    const dot=(roadCx-c[0])*perpX+(roadCy-c[1])*perpY;
+    return dot>=0?[perpX,perpY]:[-perpX,-perpY];
+  }
+
+  // Villa A (strip 0): 72m² keeping road side
+  const bpA=pBuildParcels[0];
+  if(bpA&&bpA.length>=3&&polyArea(bpA)>=VILLA_AREA){
+    const[nx,ny]=roadSideNormal(bpA);
+    pVillaPolys[0]=clipToArea(bpA,VILLA_AREA,nx,ny);
+  } else { pVillaPolys[0]=bpA||[] }
+
+  // Villa B (strip 1): 72m² keeping road side
+  const bpB=pBuildParcels[1];
+  if(bpB&&bpB.length>=3&&polyArea(bpB)>=VILLA_AREA){
+    const[nx,ny]=roadSideNormal(bpB);
+    pVillaPolys[1]=clipToArea(bpB,VILLA_AREA,nx,ny);
+  } else { pVillaPolys[1]=bpB||[] }
+
+  // Villa C (strip 2): 72m² keeping road side
+  const bpC=pBuildParcels[2];
+  if(bpC&&bpC.length>=3&&polyArea(bpC)>=VILLA_AREA){
+    const[nx,ny]=roadSideNormal(bpC);
+    pVillaPolys[2]=clipToArea(bpC,VILLA_AREA,nx,ny);
+  } else { pVillaPolys[2]=bpC||[] }
+
+  // Compute optimum mode shapes
+  const dir=getDivDir();
+  if(dir==='optimum3'){
+    // For radial partition, villa polys = buildable areas (no further clipping)
+    pCommonRectAB=null;
+    pClipC=null;
+    return;
+  }
+  if(dir==='optimum'||dir==='optimum2'){
+    const flip=dir==='optimum2';
+    pCommonRectAB=findMaxCommonRectForIndices([0,1],80,flip);
+    // Villa C: clip 70m² from road side of buildable area (same in both)
+    const bpC2=pBuildParcels[2];
+    if(bpC2&&bpC2.length>=3&&polyArea(bpC2)>=70){
+      const[nx,ny]=roadSideNormal(bpC2);
+      let poly=clipToArea(bpC2,70,nx,ny);
+      // Trim: cut C1-C2 wall to 6m from C1, then diagonal to C3 (removing C2)
+      if(poly.length>=5){
+        const c1=poly[0],c2=poly[1];
+        const edgeDx=c2[0]-c1[0],edgeDy=c2[1]-c1[1];
+        const edgeLen=Math.hypot(edgeDx,edgeDy);
+        const t=Math.min(6/edgeLen,1);
+        const newPt=[c1[0]+t*edgeDx,c1[1]+t*edgeDy];
+        poly=[poly[0],newPt,...poly.slice(2)];
+      }
+      pClipC=poly;
+    } else {
+      pClipC=bpC2||[];
+    }
+  } else {
+    pCommonRectAB=null;
+    pClipC=null;
+  }
+}
+
+// Largest equal rectangle that fits in given buildable areas (aligned to sweep/perp)
+let pCommonRectAB=null; // 80m² rectangle fitting in both A and B
+let pClipC=null;        // 70m² clipped polygon for C
+
+function findMaxCommonRectForIndices(indices,targetArea,awayFromRoad){
+  const sx=pRoadNx,sy=pRoadNy; // sweep
+  const px=-pRoadNy,py=pRoadNx; // perp
+
+  // Cross-section profile: at each sweep position, find perp extent
+  function profile(poly){
+    const sProjs=poly.map(p=>p[0]*sx+p[1]*sy);
+    const sMin=Math.min(...sProjs),sMax=Math.max(...sProjs);
+    const N=150,ds=(sMax-sMin)/N;
+    const sec=[];
+    for(let i=0;i<=N;i++){
+      const s=sMin+i*ds;
+      const hits=[];
+      for(let j=0;j<poly.length;j++){
+        const a=poly[j],b=poly[(j+1)%poly.length];
+        const sa=a[0]*sx+a[1]*sy,sb=b[0]*sx+b[1]*sy;
+        if((sa<=s&&sb>=s)||(sb<=s&&sa>=s)){
+          const den=sb-sa;
+          if(Math.abs(den)<1e-9){hits.push(a[0]*px+a[1]*py,b[0]*px+b[1]*py)}
+          else{const t=(s-sa)/den;hits.push((a[0]+t*(b[0]-a[0]))*px+(a[1]+t*(b[1]-a[1]))*py)}
+        }
+      }
+      if(hits.length>=2) sec.push({s,lo:Math.min(...hits),hi:Math.max(...hits)});
+    }
+    return sec;
+  }
+
+  // For a profile and rect sweep-width W, find max perp-height achievable
+  function maxHForW(sec,W){
+    if(sec.length<2) return 0;
+    const ds=sec[1].s-sec[0].s;
+    const span=Math.max(1,Math.round(W/ds));
+    if(span>sec.length) return 0;
+    let bestH=0;
+    for(let i=0;i<=sec.length-span;i++){
+      let lo=-Infinity,hi=Infinity;
+      for(let j=i;j<i+span;j++){if(sec[j].lo>lo)lo=sec[j].lo;if(sec[j].hi<hi)hi=sec[j].hi}
+      const h=hi-lo;
+      if(h>bestH) bestH=h;
+    }
+    return bestH;
+  }
+
+  const selProfs=indices.map(i=>{const bp=pBuildParcels[i];return(bp&&bp.length>=3)?profile(bp):null});
+  if(selProfs.some(p=>!p||p.length<2)) return null;
+
+  let bestW=0,bestH=0,bestA=0;
+
+  if(targetArea){
+    // Find the most square-like rectangle of exactly targetArea that fits in all
+    let bestRatio=Infinity;
+    for(let w=2;w<=targetArea/2;w+=0.1){
+      const hNeeded=targetArea/w;
+      const hAvail=Math.min(...selProfs.map(pr=>maxHForW(pr,w)));
+      if(hAvail>=hNeeded){
+        const ratio=w>hNeeded?w/hNeeded:hNeeded/w;
+        if(ratio<bestRatio){bestRatio=ratio;bestW=w;bestH=hNeeded}
+      }
+    }
+    if(bestW<1) return null; // target doesn't fit
+    // Fine search
+    for(let w=Math.max(2,bestW-0.5);w<=bestW+0.5;w+=0.02){
+      const hNeeded=targetArea/w;
+      const hAvail=Math.min(...selProfs.map(pr=>maxHForW(pr,w)));
+      if(hAvail>=hNeeded){
+        const ratio=w>hNeeded?w/hNeeded:hNeeded/w;
+        if(ratio<bestRatio){bestRatio=ratio;bestW=w;bestH=hNeeded}
+      }
+    }
+    bestA=bestW*bestH;
+  } else {
+    // No target: find max area rectangle
+    const maxW=Math.min(...selProfs.map(pr=>{const ss=pr.map(s=>s.s);return Math.max(...ss)-Math.min(...ss)}));
+    for(let w=0.5;w<=maxW;w+=0.3){
+      const h=Math.min(...selProfs.map(pr=>maxHForW(pr,w)));
+      if(w*h>bestA){bestA=w*h;bestW=w;bestH=h}
+    }
+    for(let w=Math.max(0.5,bestW-1);w<=Math.min(maxW,bestW+1);w+=0.05){
+      const h=Math.min(...selProfs.map(pr=>maxHForW(pr,w)));
+      if(w*h>bestA){bestA=w*h;bestW=w;bestH=h}
+    }
+  }
+  if(bestA<1) return null;
+
+  // Position each rectangle inside its polygon (toward road)
+  const roadCx=(P2[0]+P3[0]+P4[0]+P5[0]+P6[0])/5;
+  const roadCy=(P2[1]+P3[1]+P4[1]+P5[1]+P6[1])/5;
+  const roadPerp=roadCx*px+roadCy*py;
+
+  const rects=[];
+  for(let ki=0;ki<indices.length;ki++){
+    const sec=selProfs[ki];
+    const ds=sec[1].s-sec[0].s;
+    const span=Math.max(1,Math.round(bestW/ds));
+    let bestPos=null,bestDist=Infinity;
+    for(let i=0;i<=sec.length-span;i++){
+      let lo=-Infinity,hi=Infinity;
+      for(let j=i;j<i+span;j++){if(sec[j].lo>lo)lo=sec[j].lo;if(sec[j].hi<hi)hi=sec[j].hi}
+      if(hi-lo>=bestH-0.01){
+        // Place toward or away from road in perp direction
+        let pCenter;
+        if(awayFromRoad){
+          if(roadPerp>(lo+hi)/2) pCenter=lo+bestH/2;
+          else pCenter=hi-bestH/2;
+        } else {
+          if(roadPerp>(lo+hi)/2) pCenter=hi-bestH/2;
+          else pCenter=lo+bestH/2;
+        }
+        const sMid=(sec[i].s+sec[Math.min(i+span-1,sec.length-1)].s)/2;
+        const d=Math.abs(pCenter-roadPerp);
+        if(d<bestDist){bestDist=d;bestPos={s0:sec[i].s,s1:sec[i].s+bestW,p0:pCenter-bestH/2,p1:pCenter+bestH/2}}
+      }
+    }
+    if(!bestPos){rects[indices[ki]]=null;continue}
+    // 4 corners in world coordinates: (s,p) → (s*sx+p*px, s*sy+p*py)
+    rects[indices[ki]]=[
+      [bestPos.s0*sx+bestPos.p0*px, bestPos.s0*sy+bestPos.p0*py],
+      [bestPos.s1*sx+bestPos.p0*px, bestPos.s1*sy+bestPos.p0*py],
+      [bestPos.s1*sx+bestPos.p1*px, bestPos.s1*sy+bestPos.p1*py],
+      [bestPos.s0*sx+bestPos.p1*px, bestPos.s0*sy+bestPos.p1*py]
+    ];
+  }
+
+  return{w:bestW,h:bestH,area:bestA,rects};
+}
+
+// Trapezoid for Villa C: uses full buildable width at each end (road=wide, interior=narrow)
+// Convex buildable area guarantees the trapezoid stays inside.
+function findTrapezoidForC(targetArea){
+  const bp=pBuildParcels[2];
+  if(!bp||bp.length<3) return null;
+
+  const sx=pRoadNx,sy=pRoadNy;
+  const px=-pRoadNy,py=pRoadNx;
+
+  // Cross-section profile along perp axis
+  const perpProjs=bp.map(p=>p[0]*px+p[1]*py);
+  const pMin=Math.min(...perpProjs),pMax=Math.max(...perpProjs);
+  const N=200,dp=(pMax-pMin)/N;
+  const sections=[];
+  for(let i=0;i<=N;i++){
+    const p=pMin+i*dp;
+    const hits=[];
+    for(let j=0;j<bp.length;j++){
+      const a=bp[j],b=bp[(j+1)%bp.length];
+      const pa=a[0]*px+a[1]*py, pb=b[0]*px+b[1]*py;
+      if((pa<=p&&pb>=p)||(pb<=p&&pa>=p)){
+        const den=pb-pa;
+        if(Math.abs(den)<1e-9){hits.push(a[0]*sx+a[1]*sy,b[0]*sx+b[1]*sy)}
+        else{const t=(p-pa)/den;hits.push((a[0]+t*(b[0]-a[0]))*sx+(a[1]+t*(b[1]-a[1]))*sy)}
+      }
+    }
+    if(hits.length>=2){
+      const w=Math.max(...hits)-Math.min(...hits);
+      if(w>0.5) sections.push({p,sL:Math.min(...hits),sR:Math.max(...hits),w});
+    }
+  }
+  if(sections.length<3) return null;
+
+  // Find widest section = road side anchor
+  let maxIdx=0;
+  for(let i=1;i<sections.length;i++) if(sections[i].w>sections[maxIdx].w) maxIdx=i;
+  const s0=sections[maxIdx];
+
+  // Interpolate sweep bounds at any perp position
+  function sweepAtPerp(p){
+    for(let i=0;i<sections.length-1;i++){
+      const a=sections[i],b=sections[i+1];
+      if((a.p<=p&&b.p>=p)||(b.p<=p&&a.p>=p)){
+        const t=Math.abs(b.p-a.p)<1e-9?0:(p-a.p)/(b.p-a.p);
+        return{sL:a.sL+t*(b.sL-a.sL),sR:a.sR+t*(b.sR-a.sR),w:a.w+t*(b.w-a.w)};
+      }
+    }
+    return sections[sections.length-1];
+  }
+
+  // Extend from widest section toward the narrow end (away from road)
+  // Determine direction: narrow end is whichever side has less total area
+  const pFar0=sections[0].p, pFarN=sections[sections.length-1].p;
+  const dist0=Math.abs(s0.p-pFar0), distN=Math.abs(s0.p-pFarN);
+  // Extend toward the farther end (more room for area)
+  const goNeg=dist0>distN; // true = extend toward sections[0], false = toward sections[last]
+  const pFar=goNeg?pFar0:pFarN;
+  const maxDist=Math.abs(pFar-s0.p);
+
+  // Binary search for distance from s0 where trapezoid area = targetArea
+  let searchLo=0,searchHi=maxDist;
+  for(let iter=0;iter<60;iter++){
+    const mid=(searchLo+searchHi)/2;
+    const p1=goNeg?s0.p-mid:s0.p+mid;
+    const end=sweepAtPerp(p1);
+    const area=(s0.w+end.w)*mid/2;
+    if(area<targetArea) searchLo=mid; else searchHi=mid;
+  }
+  const finalDist=(searchLo+searchHi)/2;
+  const p1=goNeg?s0.p-finalDist:s0.p+finalDist;
+  const end=sweepAtPerp(p1);
+  const area=(s0.w+end.w)*finalDist/2;
+
+  // 4 corners in world coordinates
+  const corners=[
+    [s0.sL*sx+s0.p*px, s0.sL*sy+s0.p*py],
+    [s0.sR*sx+s0.p*px, s0.sR*sy+s0.p*py],
+    [end.sR*sx+p1*px, end.sR*sy+p1*py],
+    [end.sL*sx+p1*px, end.sL*sy+p1*py]
+  ];
+
+  return{corners,area,w0:s0.w,w1:end.w,h:finalDist};
+}
+
+let pBaseCache='';
+
+function pRenderBase(){
+  let h='';
+  // Road
+  const roadW=3.5;
+  const roadPts=[P6,P5,P4,P3,P2];
+  function offsetOutward(pts,d){
+    const out=[];
+    for(let i=0;i<pts.length-1;i++){
+      const[x1,y1]=pts[i],[x2,y2]=pts[i+1];
+      const dx=x2-x1,dy=y2-y1,len=Math.hypot(dx,dy);
+      const nx=-dy/len,ny=dx/len;
+      out.push([x1+nx*d,y1+ny*d],[x2+nx*d,y2+ny*d]);
+    }
+    return out;
+  }
+  const roadOuter=offsetOutward(roadPts,roadW);
+  const roadPoly=[...roadPts,...roadOuter.reverse()];
+  h+=`<polygon points="${ps(roadPoly)}" fill="#999" opacity=".2"/>`;
+  let rp='M'+roadPts.map(p=>{const s=S(p[0],p[1]);return s[0].toFixed(1)+','+s[1].toFixed(1)}).join(' L');
+  h+=`<path d="${rp}" fill="none" stroke="#777" stroke-width="1" opacity=".4" stroke-dasharray="6,4" stroke-linecap="round"/>`;
+  const rl=S(8,44);h+=`<text x="${rl[0]}" y="${rl[1]}" font-size="9" font-weight="600" fill="#666" letter-spacing="2" transform="rotate(-5,${rl[0]},${rl[1]})">YOL</text>`;
+
+  // Neighbors
+  const nbW=2.5;
+  const nb1Outer=offsetOutward([P6,P1],-nbW);
+  const nb1Poly=[P6,P1,...nb1Outer.reverse()];
+  const nb2Outer=offsetOutward([P1,P2],-nbW);
+  const nb2Poly=[P1,P2,...nb2Outer.reverse()];
+  h+=`<polygon points="${ps(nb1Poly)}" fill="#4CAF50" opacity=".15"/>`;
+  h+=`<polygon points="${ps(nb2Poly)}" fill="#4CAF50" opacity=".15"/>`;
+  const nb1mid=S((P6[0]+P1[0])/2-2.5,(P6[1]+P1[1])/2);
+  const nb1ang=Math.atan2(P1[1]-P6[1],P1[0]-P6[0])*180/Math.PI;
+  h+=`<text x="${nb1mid[0]}" y="${nb1mid[1]}" font-size="8" font-weight="600" fill="#2E7D32" letter-spacing="1" text-anchor="middle" transform="rotate(${-nb1ang},${nb1mid[0]},${nb1mid[1]})">KOMŞU</text>`;
+  const nb2mid=S((P1[0]+P2[0])/2,(P1[1]+P2[1])/2-2);
+  const nb2ang=Math.atan2(P2[1]-P1[1],P2[0]-P1[0])*180/Math.PI;
+  h+=`<text x="${nb2mid[0]}" y="${nb2mid[1]}" font-size="8" font-weight="600" fill="#2E7D32" letter-spacing="1" text-anchor="middle" transform="rotate(${-nb2ang},${nb2mid[0]},${nb2mid[1]})">KOMŞU</text>`;
+
+  // Parcel fills
+  const lotFills=['var(--lot1f)','var(--lot2f)','var(--lot3f)'];
+  const lotColors=['var(--lot1)','var(--lot2)','var(--lot3)'];
+  const lotLabels=['PARSEL A','PARSEL B','PARSEL C'];
+  const isOpt3=getDivDir()==='optimum3';
+  for(let i=0;i<3;i++){
+    if(pParcels[i]&&pParcels[i].length>=3){
+      h+=`<polygon points="${ps(pParcels[i])}" fill="${lotFills[i]}" opacity=".6"/>`;
+      if(!isOpt3){
+        const c=polyCentroid(pParcels[i]);
+        const cs=S(c[0],c[1]);
+        h+=`<text x="${cs[0]}" y="${cs[1]}" text-anchor="middle" font-size="11" font-weight="700" fill="${lotColors[i]}" opacity=".25">${lotLabels[i]}</text>`;
+      }
+    }
+  }
+
+  // Division lines
+  if(getDivDir()==='optimum3'&&pRadialResult){
+    // Radial lines from center to boundary points
+    const cs=S(pRadialResult.cx,pRadialResult.cy);
+    h+=`<circle cx="${cs[0]}" cy="${cs[1]}" r="3.5" fill="#E65100" opacity=".7"/>`;
+    for(const ep of pRadialResult.pts){
+      const es=S(ep[0],ep[1]);
+      h+=`<line x1="${cs[0]}" y1="${cs[1]}" x2="${es[0]}" y2="${es[1]}" stroke="#E65100" stroke-width="1.5" stroke-dasharray="6,4" opacity=".6"/>`;
+    }
+  } else {
+    // Perpendicular to sweep direction
+    for(const t of[pDivT1,pDivT2]){
+      const px=P1[0]+t*pRoadNx, py=P1[1]+t*pRoadNy;
+      const perpDx=-pRoadNy, perpDy=pRoadNx;
+      const hits=[];
+      for(let i=0;i<parcelM.length;i++){
+        const a=parcelM[i],b=parcelM[(i+1)%parcelM.length];
+        const dx=b[0]-a[0],dy=b[1]-a[1];
+        const det=dx*perpDy-dy*perpDx;
+        if(Math.abs(det)<1e-9)continue;
+        const s=((px-a[0])*perpDy-(py-a[1])*perpDx)/det;
+        if(s>=0&&s<=1) hits.push([a[0]+s*dx,a[1]+s*dy]);
+      }
+      if(hits.length>=2){
+        const s1=S(hits[0][0],hits[0][1]),s2=S(hits[1][0],hits[1][1]);
+        h+=`<line x1="${s1[0]}" y1="${s1[1]}" x2="${s2[0]}" y2="${s2[1]}" stroke="#E65100" stroke-width="1.5" stroke-dasharray="6,4" opacity=".6"/>`;
+      }
+    }
+  }
+
+  // Buildable boundaries per parcel (skip for optimum3)
+  if(!isOpt3){
+    for(let i=0;i<3;i++){
+      if(pBuildParcels[i]&&pBuildParcels[i].length>=3){
+        h+=`<polygon points="${ps(pBuildParcels[i])}" fill="none" stroke="var(--sb)" stroke-width="1" stroke-dasharray="4,3" opacity=".4"/>`;
+      }
+    }
+  }
+
+  // Parcel outline
+  h+=`<polygon points="${ps(parcelM)}" fill="none" stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round" opacity=".7"/>`;
+
+  // Setback labels
+  const sb5=S(20,39);h+=`<text x="${sb5[0]}" y="${sb5[1]}" font-size="8" fill="var(--hint)" text-anchor="middle">5m çekme</text>`;
+  const sb3=S(4,10);h+=`<text x="${sb3[0]}" y="${sb3[1]}" font-size="8" fill="var(--hint)" text-anchor="middle" transform="rotate(-66,${sb3[0]},${sb3[1]})">3m çekme</text>`;
+
+  // Vertices
+  const vs=[{n:'P1',m:P1,o:[0,15]},{n:'P2',m:P2,o:[10,14]},{n:'P3',m:P3,o:[8,-8]},{n:'P4',m:P4,o:[5,-10]},{n:'P5',m:P5,o:[-5,-10]},{n:'P6',m:P6,o:[-16,0]}];
+  for(const v of vs){const s=S(v.m[0],v.m[1]);h+=`<circle cx="${s[0]}" cy="${s[1]}" r="3" fill="var(--text)" opacity=".5"/><text x="${s[0]+v.o[0]}" y="${s[1]+v.o[1]}" text-anchor="middle" font-size="10" font-weight="600" fill="var(--muted)">${v.n}</text>`}
+
+  // N + scale
+  h+=`<g transform="rotate(-4,550,515)"><line x1="550" y1="530" x2="550" y2="498" stroke="var(--text)" stroke-width="1.5"/><polygon points="550,493 545,502 555,502" fill="var(--text)"/></g><text x="550" y="543" text-anchor="middle" font-size="10" font-weight="600" fill="var(--muted)">N</text>`;
+  const tm=10*sc;h+=`<line x1="30" y1="555" x2="${30+tm}" y2="555" stroke="var(--text)" stroke-width="1.5"/><line x1="30" y1="551" x2="30" y2="559" stroke="var(--text)" stroke-width="1.5"/><line x1="${30+tm}" y1="551" x2="${30+tm}" y2="559" stroke="var(--text)" stroke-width="1.5"/><text x="${30+tm/2}" y="550" text-anchor="middle" font-size="9" fill="var(--muted)">10 m</text>`;
+  return h;
+}
+
+function pRenderVillas(){
+  let h='';
+  // Show buildable areas per parcel (skip for optimum3 — shown differently)
+  if(getDivDir()!=='optimum3'){
+    const buildFills=['rgba(216,90,48,.18)','rgba(24,95,165,.18)','rgba(83,74,183,.18)'];
+    const buildStrokes=['var(--lot1)','var(--lot2)','var(--lot3)'];
+    const labels=['Yapılaşma A','Yapılaşma B','Yapılaşma C'];
+    for(let i=0;i<3;i++){
+      const bp=pBuildParcels[i];
+      if(!bp||bp.length<3)continue;
+      const svgC=bp.map(c=>S(c[0],c[1]));
+      h+=`<polygon points="${svgC.map(s=>s[0].toFixed(1)+','+s[1].toFixed(1)).join(' ')}" fill="${buildFills[i]}" stroke="${buildStrokes[i]}" stroke-width="1.2" stroke-dasharray="3,2"/>`;
+      const c=polyCentroid(bp);
+      const cs=S(c[0],c[1]);
+      const area=polyArea(bp);
+      h+=`<text x="${cs[0]}" y="${cs[1]-4}" text-anchor="middle" font-size="9" font-weight="700" fill="${buildStrokes[i]}" pointer-events="none">${labels[i]}</text>`;
+      h+=`<text x="${cs[0]}" y="${cs[1]+9}" text-anchor="middle" font-size="8.5" font-weight="500" fill="${buildStrokes[i]}" pointer-events="none">${area.toFixed(0)} m²</text>`;
+    }
+  }
+  // Common inscribed rectangles A&B (optimum mode)
+  if(pCommonRectAB&&pCommonRectAB.rects){
+    const rectStrokes=['var(--lot1)','var(--lot2)'];
+    for(let i=0;i<2;i++){
+      const r=pCommonRectAB.rects[i];
+      if(!r)continue;
+      const svgC=r.map(c=>S(c[0],c[1]));
+      h+=`<polygon points="${svgC.map(s=>s[0].toFixed(1)+','+s[1].toFixed(1)).join(' ')}" fill="rgba(255,255,255,.45)" stroke="${rectStrokes[i]}" stroke-width="2" stroke-dasharray="6,3"/>`;
+      const cx=(svgC[0][0]+svgC[2][0])/2, cy=(svgC[0][1]+svgC[2][1])/2;
+      h+=`<text x="${cx}" y="${cy+3}" text-anchor="middle" font-size="8" font-weight="700" fill="${rectStrokes[i]}" pointer-events="none">${pCommonRectAB.w.toFixed(1)}×${pCommonRectAB.h.toFixed(1)}m = ${pCommonRectAB.area.toFixed(0)} m²</text>`;
+    }
+  }
+  // Villa C clipped polygon (optimum mode)
+  if(pClipC&&pClipC.length>=3){
+    const svgC=pClipC.map(c=>S(c[0],c[1]));
+    h+=`<polygon points="${svgC.map(s=>s[0].toFixed(1)+','+s[1].toFixed(1)).join(' ')}" fill="rgba(255,255,255,.45)" stroke="var(--lot3)" stroke-width="2" stroke-dasharray="6,3"/>`;
+    const c=polyCentroid(pClipC);
+    const cs=S(c[0],c[1]);
+    const area=polyArea(pClipC);
+    h+=`<text x="${cs[0]}" y="${cs[1]-4}" text-anchor="middle" font-size="8" font-weight="700" fill="var(--lot3)" pointer-events="none">Villa C</text>`;
+    h+=`<text x="${cs[0]}" y="${cs[1]+8}" text-anchor="middle" font-size="8" font-weight="700" fill="var(--lot3)" pointer-events="none">${area.toFixed(0)} m²</text>`;
+    // Label Villa C corners: C1, C2, C3, ...
+    for(let i=0;i<pClipC.length;i++){
+      const s=S(pClipC[i][0],pClipC[i][1]);
+      h+=`<circle cx="${s[0]}" cy="${s[1]}" r="3" fill="var(--lot3)"/>`;
+      h+=`<text x="${s[0]+8}" y="${s[1]-5}" font-size="9" font-weight="700" fill="var(--lot3)" pointer-events="none">C${i+1}</text>`;
+    }
+  }
+  // Draggable Y-partition handles (optimum3 mode)
+  if(getDivDir()==='optimum3'&&pRadialResult){
+    // Center handle
+    const cs=S(pRadialResult.cx,pRadialResult.cy);
+    h+=`<circle cx="${cs[0]}" cy="${cs[1]}" r="8" fill="#E65100" opacity=".8" stroke="#fff" stroke-width="2" class="y-handle" data-yhandle="center" style="cursor:grab"/>`;
+    // Boundary point handles
+    const handleColors=['var(--lot1)','var(--lot2)','var(--lot3)'];
+    for(let i=0;i<pRadialResult.pts.length;i++){
+      const ps2=S(pRadialResult.pts[i][0],pRadialResult.pts[i][1]);
+      h+=`<circle cx="${ps2[0]}" cy="${ps2[1]}" r="7" fill="${handleColors[i]}" opacity=".8" stroke="#fff" stroke-width="2" class="y-handle" data-yhandle="bp${i}" style="cursor:grab"/>`;
+    }
+    // Area labels on each sector
+    const sectorNames=['A','B','C'];
+    const sectorColors=['var(--lot1)','var(--lot2)','var(--lot3)'];
+    for(let i=0;i<pRadialResult.sectors.length;i++){
+      const sec=pRadialResult.sectors[i];
+      if(sec.length<3)continue;
+      const c=polyCentroid(sec);
+      const cs2=S(c[0],c[1]);
+      h+=`<text x="${cs2[0]}" y="${cs2[1]+4}" text-anchor="middle" font-size="12" font-weight="700" fill="${sectorColors[i]}" pointer-events="none" opacity=".8">${pRadialResult.areas[i].toFixed(0)} m²</text>`;
+    }
+  }
+  return h;
+}
+
+function pRenderDimensions(){
+  let h='';
+  // Parcel edges
+  const edges=[{a:P1,b:P2,l:'33.0m',o:18},{a:P2,b:P3,l:'29.8m',o:18},{a:P3,b:P4,l:'6.3m',o:12},{a:P4,b:P5,l:'13.6m',o:14},{a:P5,b:P6,l:'24.3m',o:14},{a:P6,b:P1,l:'29.3m',o:-18}];
+  for(const e of edges) h+=dimOff(e.a,e.b,e.l,'var(--dg)','var(--dgb)',e.o);
+
+  // Buildable-area-to-buildable-area distances (between neighboring parcels)
+  function poly2poly(p1,p2){
+    let best={d:999,from:null,to:null};
+    for(const p of p1)for(let i=0;i<p2.length;i++){const{d,proj}=ptSeg(p,p2[i],p2[(i+1)%p2.length]);if(d<best.d)best={d,from:p,to:proj}}
+    for(const p of p2)for(let i=0;i<p1.length;i++){const{d,proj}=ptSeg(p,p1[i],p1[(i+1)%p1.length]);if(d<best.d)best={d,from:proj,to:p}}
+    return best;
+  }
+  for(const[i,j]of[[0,1],[1,2]]){
+    const a=pBuildParcels[i],b=pBuildParcels[j];
+    if(a.length<3||b.length<3)continue;
+    const m=poly2poly(a,b);
+    h+=dimSVG(m.from,m.to,m.d.toFixed(1)+'m','var(--db)','var(--dbb)');
+  }
+  return h;
+}
+
+
+function pRenderFull(){
+  pBaseCache=pRenderBase();
+  document.getElementById('pMap').innerHTML=pBaseCache+pRenderVillas()+pRenderDimensions();
+}
+
+function pUpdateStats(){
+  const floors=parseInt(document.getElementById('pFloorCount').value)||2;
+  // Buildable areas per parcel
+  const buildAreas=pBuildParcels.map(p=>p&&p.length>=3?polyArea(p):0);
+  const totalBuild=buildAreas.reduce((s,a)=>s+a,0);
+  const vals=document.querySelectorAll('#pStatsRow .stat .val');
+  vals[3].textContent=buildAreas.map(a=>a.toFixed(0)).join(' / ');
+  vals[4].textContent='—';
+  // Lot details
+  const ids=['A','B','C'];
+  for(let i=0;i<3;i++){
+    const lotA=pParcels[i]&&pParcels[i].length>=3?polyArea(pParcels[i]):0;
+    const detEl=document.getElementById('pLotDetail'+ids[i]);
+    const areaEl=document.getElementById('pLotArea'+ids[i]);
+    if(detEl)detEl.textContent='Yapılaşma: '+buildAreas[i].toFixed(0)+' m² · bahçe: '+(lotA-buildAreas[i]).toFixed(0)+' m²';
+    if(areaEl)areaEl.textContent=lotA.toFixed(0)+' m²';
+  }
+  // Average lot
+  const avgLot=pParcels.reduce((s,l)=>s+(l.length>=3?polyArea(l):0),0)/3;
+  vals[2].textContent='~'+avgLot.toFixed(0);
+  // Design note
+  const dn=document.getElementById('pDesignNote');
+  if(dn)dn.innerHTML='Yapılaşma alanları gösterilmektedir. Yoldan <strong>5m</strong>, komşudan <strong>3m</strong>, parsel sınırından <strong>3m</strong> çekme mesafesi uygulanmıştır.';
+  // TAKS/KAKS — compute from villa polygons
+  const taksLim=parseFloat(document.getElementById('pTaksLimit').value)||0.30;
+  const kaksLim=parseFloat(document.getElementById('pKaksLimit').value)||0.60;
+  const totalFootprint=pVillaPolys.reduce((s,p)=>s+(p&&p.length>=3?polyArea(p):0),0);
+  const totalConstruction=totalFootprint*floors;
+  const curTaks=totalFootprint/PARCEL_AREA;
+  const curKaks=totalConstruction/PARCEL_AREA;
+  const maxFp=(taksLim*PARCEL_AREA)/3;
+  const maxTotal=(kaksLim*PARCEL_AREA)/3;
+  document.getElementById('pTaksVal').textContent=curTaks.toFixed(3);
+  document.getElementById('pTaksVal').className='info-val '+(curTaks>taksLim?'warn':'ok');
+  document.getElementById('pTaksMax').textContent=maxFp.toFixed(0)+' m²';
+  document.getElementById('pKaksVal').textContent=curKaks.toFixed(3);
+  document.getElementById('pKaksVal').className='info-val '+(curKaks>kaksLim?'warn':'ok');
+  document.getElementById('pKaksMax').textContent=maxTotal.toFixed(0)+' m²';
+  document.getElementById('pLivingMax').textContent=maxTotal.toFixed(0)+' m²';
+}
+
+document.getElementById('pFloorCount').addEventListener('input',function(){if(pInitialized){pUpdateStats()}});
+document.getElementById('pTaksLimit').addEventListener('input',function(){if(pInitialized){pUpdateStats()}});
+document.getElementById('pKaksLimit').addEventListener('input',function(){if(pInitialized){pUpdateStats()}});
+function pRecalcAll(){
+  if(!pInitialized)return;
+  try{
+    computeParcels();
+    computeVillaPolys();
+    pBaseCache='';
+    pRenderFull();
+    pUpdateStats();
+  }catch(e){console.error('pRecalcAll error:',e)}
+}
+function pSetDir(el){
+  document.querySelectorAll('#pDivDirGroup .toggle-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  pRecalcAll();
+}
+function pSetMode(el){
+  document.querySelectorAll('#pDivModeGroup .toggle-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  pOptimalAngle=null; // re-optimize for new mode
+  pRecalcAll();
+}
+
+// Fullscreen for parcelled
+let pIsFullscreen=false;
+let pVb={x:0,y:0,w:600,h:600};
+function pApplyViewBox(){
+  const svg=document.getElementById('pMap');
+  if(pIsFullscreen) svg.setAttribute('viewBox',`${pVb.x} ${pVb.y} ${pVb.w} ${pVb.h}`);
+  else svg.setAttribute('viewBox','0 0 600 600');
+}
+function pZoom(dir){
+  const f=dir>0?0.8:1.25;
+  const nw=Math.max(150,Math.min(1200,pVb.w*f));
+  const nh=Math.max(145,Math.min(1160,pVb.h*f));
+  pVb.x+=(pVb.w-nw)/2;pVb.y+=(pVb.h-nh)/2;pVb.w=nw;pVb.h=nh;pApplyViewBox();
+}
+function pToggleFullscreen(){
+  const wrap=document.getElementById('pMapWrap');
+  const btn=document.getElementById('pFsBtn');
+  const zc=document.getElementById('pZoomControls');
+  pIsFullscreen=!pIsFullscreen;
+  wrap.classList.toggle('fullscreen',pIsFullscreen);
+  document.body.classList.toggle('fs-active',pIsFullscreen);
+  if(pIsFullscreen){btn.textContent='✕';pVb={x:0,y:0,w:600,h:600};zc.style.display='flex'}
+  else{btn.textContent='Tam Ekran';zc.style.display='none'}
+  pApplyViewBox();pBaseCache='';pRenderFull();
+}
+
+function pDownloadImage(){
+  const svg=document.getElementById('pMap');
+  const cs=getComputedStyle(document.documentElement);
+  let svgData=new XMLSerializer().serializeToString(svg);
+  svgData=svgData.replace(/var\(--([^)]+)\)/g,(_,name)=>cs.getPropertyValue('--'+name).trim()||_);
+  if(!svgData.includes('xmlns='))svgData=svgData.replace('<svg','<svg xmlns="http://www.w3.org/2000/svg"');
+  svgData=svgData.replace('>','>'+`<style>text{font-family:sans-serif}</style>`);
+  const canvas=document.createElement('canvas');
+  canvas.width=1800;canvas.height=1800;
+  const ctx=canvas.getContext('2d');
+  ctx.fillStyle='#F7F6F3';ctx.fillRect(0,0,1800,1800);
+  const img=new Image();
+  const blob=new Blob([svgData],{type:'image/svg+xml;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  img.onload=function(){ctx.drawImage(img,0,0,1800,1800);URL.revokeObjectURL(url);const a=document.createElement('a');a.download='arazi-parselli-'+new Date().toISOString().slice(0,10)+'.png';a.href=canvas.toDataURL('image/png');a.click()};
+  img.onerror=function(){window.open(URL.createObjectURL(new Blob([svgData],{type:'image/svg+xml'})))};
+  img.src=url;
+}
+
+function pInit(){
+  computeParcels();
+  computeVillaPolys();
+  // Pan in fullscreen
+  const pMapEl=document.getElementById('pMap');
+  let pIsPanning=false,pPanSX,pPanSY,pVbSX,pVbSY;
+  // Y-handle dragging state
+  let yDragHandle=null; // 'center' or 'bp0','bp1','bp2'
+
+  function pGetPos(e){
+    const r=pMapEl.getBoundingClientRect();
+    const cx=e.touches?e.touches[0].clientX:e.clientX;
+    const cy=e.touches?e.touches[0].clientY:e.clientY;
+    // Account for viewbox
+    const vb=pIsFullscreen?pVb:{x:0,y:0,w:600,h:600};
+    const sx=vb.x+(cx-r.left)/r.width*vb.w;
+    const sy=vb.y+(cy-r.top)/r.height*vb.h;
+    return M(sx,sy);
+  }
+
+  // Snap a point to the nearest position on a parcel edge
+  function snapToEdge(mx,my,edgeIdx){
+    const a=parcelM[edgeIdx],b=parcelM[(edgeIdx+1)%parcelM.length];
+    const dx=b[0]-a[0],dy=b[1]-a[1],len2=dx*dx+dy*dy;
+    let t=len2>0?((mx-a[0])*dx+(my-a[1])*dy)/len2:0;
+    t=Math.max(0.02,Math.min(0.98,t));
+    return t;
+  }
+
+  pMapEl.addEventListener('mousedown',function(e){
+    // Check for Y-handle
+    const handle=e.target.closest('.y-handle');
+    if(handle){
+      yDragHandle=handle.getAttribute('data-yhandle');
+      e.preventDefault();
+      return;
+    }
+    if(!pIsFullscreen)return;
+    if(e.target.closest('.villa-body,.rotate-handle'))return;
+    pIsPanning=true;pPanSX=e.clientX;pPanSY=e.clientY;pVbSX=pVb.x;pVbSY=pVb.y;
+  });
+  pMapEl.addEventListener('mousemove',function(e){
+    if(yDragHandle){
+      e.preventDefault();
+      // Live update while dragging
+      const[mx,my]=pGetPos(e);
+      if(yDragHandle==='center'){
+        if(pip(mx,my,parcelM)){yCenter=[mx,my]}
+      } else {
+        const idx=parseInt(yDragHandle.slice(2));
+        const edgeIdx=yEdgePts[idx].edge;
+        // For multi-edge handles, find best edge
+        if(yEdgePts[idx].edges){
+          let bestD=Infinity,bestE=-1,bestT=0.5;
+          for(const ei of yEdgePts[idx].edges){
+            const a=parcelM[ei],b=parcelM[(ei+1)%parcelM.length];
+            const dx=b[0]-a[0],dy=b[1]-a[1],len2=dx*dx+dy*dy;
+            let t=len2>0?((mx-a[0])*dx+(my-a[1])*dy)/len2:0;
+            t=Math.max(0.02,Math.min(0.98,t));
+            const px=a[0]+t*dx,py=a[1]+t*dy;
+            const d=Math.hypot(mx-px,my-py);
+            if(d<bestD){bestD=d;bestE=ei;bestT=t}
+          }
+          yEdgePts[idx].edge=bestE;
+          yEdgePts[idx].t=bestT;
+        } else {
+          yEdgePts[idx].t=snapToEdge(mx,my,edgeIdx);
+        }
+      }
+      pRecalcAll();
+      return;
+    }
+    if(!pIsPanning)return;e.preventDefault();
+    const rect=pMapEl.getBoundingClientRect();
+    pVb.x=pVbSX-(e.clientX-pPanSX)*(pVb.w/rect.width);
+    pVb.y=pVbSY-(e.clientY-pPanSY)*(pVb.h/rect.height);
+    pApplyViewBox();
+  });
+  function endDrag(e){
+    if(yDragHandle){
+      const[mx,my]=pGetPos(e);
+      if(yDragHandle==='center'){
+        if(pip(mx,my,parcelM)){yCenter=[mx,my]}
+      } else {
+        const idx=parseInt(yDragHandle.slice(2));
+        const edgeIdx=yEdgePts[idx].edge;
+        yEdgePts[idx].t=snapToEdge(mx,my,edgeIdx);
+      }
+      yDragHandle=null;
+      pRecalcAll();
+      return;
+    }
+    pIsPanning=false;
+  }
+  pMapEl.addEventListener('mouseup',endDrag);
+  pMapEl.addEventListener('mouseleave',function(e){if(!yDragHandle)pIsPanning=false});
+
+  // Touch support for Y-handles
+  pMapEl.addEventListener('touchstart',function(e){
+    const handle=e.target.closest('.y-handle');
+    if(handle){yDragHandle=handle.getAttribute('data-yhandle');e.preventDefault()}
+  },{passive:false});
+  pMapEl.addEventListener('touchmove',function(e){
+    if(!yDragHandle)return;
+    e.preventDefault();
+    const touch=e.touches[0];
+    const r=pMapEl.getBoundingClientRect();
+    const vb=pIsFullscreen?pVb:{x:0,y:0,w:600,h:600};
+    const sx=vb.x+(touch.clientX-r.left)/r.width*vb.w;
+    const sy=vb.y+(touch.clientY-r.top)/r.height*vb.h;
+    const[mx,my]=M(sx,sy);
+    if(yDragHandle==='center'){
+      if(pip(mx,my,parcelM)){yCenter=[mx,my]}
+    } else {
+      const idx=parseInt(yDragHandle.slice(2));
+      if(yEdgePts[idx].edges){
+        let bestD=Infinity,bestE=-1,bestT=0.5;
+        for(const ei of yEdgePts[idx].edges){
+          const a=parcelM[ei],b=parcelM[(ei+1)%parcelM.length];
+          const dx=b[0]-a[0],dy=b[1]-a[1],len2=dx*dx+dy*dy;
+          let t=len2>0?((mx-a[0])*dx+(my-a[1])*dy)/len2:0;
+          t=Math.max(0.02,Math.min(0.98,t));
+          const px=a[0]+t*dx,py=a[1]+t*dy;
+          const d=Math.hypot(mx-px,my-py);
+          if(d<bestD){bestD=d;bestE=ei;bestT=t}
+        }
+        yEdgePts[idx].edge=bestE;yEdgePts[idx].t=bestT;
+      } else {
+        yEdgePts[idx].t=snapToEdge(mx,my,yEdgePts[idx].edge);
+      }
+    }
+    pRecalcAll();
+  },{passive:false});
+  pMapEl.addEventListener('touchend',function(){
+    yDragHandle=null;
+  });
+  let pWheelAccum=0,pWheelTimer=null;
+  pMapEl.addEventListener('wheel',function(e){
+    if(!pIsFullscreen)return;e.preventDefault();
+    pWheelAccum+=e.deltaY;
+    if(pWheelTimer)return;
+    pWheelTimer=setTimeout(()=>{if(Math.abs(pWheelAccum)>30)pZoom(pWheelAccum<0?1:-1);pWheelAccum=0;pWheelTimer=null},80);
+  },{passive:false});
+
+  pRenderFull();
+  pUpdateStats();
+  pInitialized=true;
+}
+
+// ═══════════════════════════════════════════════════
+// 3D VIEW (Three.js)
+// ═══════════════════════════════════════════════════
+
+const LAT=36.995, LON=30.945; // Antalya/Serik from GeoJSON
+const FLOOR_H=3; // meters per floor
+const VILLA_FLOORS=2;
+let threeInited=false, threeScene, threeCamera, threeRenderer, threeControls, threeSunLight;
+let threeAnimId=null, threeIs3D=false;
+let villaGroup; // group holding villa meshes for easy rebuild
+
+function setView(mode,btn){
+  // Update toggle buttons
+  const group=btn.parentElement;
+  group.querySelectorAll('.toggle-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+
+  // Determine which tab is active
+  const isFree=document.getElementById('tab-free').classList.contains('active');
+  const svgEl=isFree?document.getElementById('map'):document.getElementById('pMap');
+  const canvasEl=isFree?document.getElementById('threeCanvas'):document.getElementById('pThreeCanvas');
+  const ctrlsEl=isFree?document.getElementById('threeControls'):document.getElementById('pThreeControls');
+
+  if(mode==='3d'){
+    svgEl.style.display='none';
+    canvasEl.style.display='block';
+    ctrlsEl.style.display='flex';
+    threeIs3D=true;
+    if(!threeInited) initThreeScene(canvasEl);
+    else if(threeRenderer.domElement!==canvasEl){
+      // Switch canvas
+      threeRenderer.dispose();
+      threeInited=false;
+      initThreeScene(canvasEl);
+    }
+    buildVillas3D();
+    updateSun3D();
+    animateThree();
+  } else {
+    svgEl.style.display='';
+    canvasEl.style.display='none';
+    ctrlsEl.style.display='none';
+    threeIs3D=false;
+    if(threeAnimId){cancelAnimationFrame(threeAnimId);threeAnimId=null}
+  }
+}
+
+// ─── Solar Position ───
+function solarPosition(lat,lon,month,hour){
+  // Approximate day of year for middle of month
+  const doy=[15,46,74,105,135,166,196,227,258,288,319,349][month];
+  const decl=23.45*Math.sin((360/365)*(284+doy)*Math.PI/180)*Math.PI/180;
+  const latR=lat*Math.PI/180;
+  // Solar noon at this longitude (approximate, ignoring equation of time)
+  const solarNoon=12-(lon-30)/15; // Turkey is UTC+3, reference meridian 30°E
+  const hourAngle=(hour-solarNoon)*15*Math.PI/180;
+  // Elevation
+  const sinElev=Math.sin(latR)*Math.sin(decl)+Math.cos(latR)*Math.cos(decl)*Math.cos(hourAngle);
+  const elevation=Math.asin(Math.max(-1,Math.min(1,sinElev)));
+  // Azimuth (from north, clockwise)
+  const cosAz=(Math.sin(decl)-Math.sin(latR)*sinElev)/(Math.cos(latR)*Math.cos(elevation)+1e-9);
+  let azimuth=Math.acos(Math.max(-1,Math.min(1,cosAz)));
+  if(hourAngle>0) azimuth=2*Math.PI-azimuth;
+  return{elevation,azimuth};
+}
+
+function sunDirection(month,hour){
+  const{elevation,azimuth}=solarPosition(LAT,LON,month,hour);
+  if(elevation<0) return null; // sun below horizon
+  // Convert to Three.js direction vector (pointing FROM the sun)
+  // Azimuth: 0=N, π/2=E, π=S, 3π/2=W
+  // Three.js: X=east, Z=-north (south), Y=up
+  const dist=80;
+  const x=dist*Math.cos(elevation)*Math.sin(azimuth);
+  const y=dist*Math.sin(elevation);
+  const z=-dist*Math.cos(elevation)*Math.cos(azimuth);
+  return{x,y,z,elevation,azimuth};
+}
+
+// ─── Scene Setup ───
+function initThreeScene(canvas){
+  // Parcel center for camera target
+  const cx=parcelM.reduce((s,p)=>s+p[0],0)/parcelM.length;
+  const cy=parcelM.reduce((s,p)=>s+p[1],0)/parcelM.length;
+
+  threeScene=new THREE.Scene();
+  threeScene.background=new THREE.Color(0x87CEEB);
+
+  // Renderer
+  threeRenderer=new THREE.WebGLRenderer({canvas,antialias:true});
+  threeRenderer.setPixelRatio(window.devicePixelRatio);
+  threeRenderer.setSize(canvas.clientWidth,canvas.clientHeight);
+  threeRenderer.shadowMap.enabled=true;
+  threeRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
+
+  // Camera
+  threeCamera=new THREE.PerspectiveCamera(50,canvas.clientWidth/canvas.clientHeight,0.5,500);
+  // Camera from north looking south, so east=right matches 2D map
+  threeCamera.position.set(cx,45,-cy-40);
+  threeCamera.lookAt(cx,0,-cy);
+
+  // Controls
+  threeControls=new THREE.OrbitControls(threeCamera,canvas);
+  threeControls.target.set(cx,0,-cy);
+  threeControls.enableDamping=true;
+  threeControls.dampingFactor=0.08;
+  threeControls.maxPolarAngle=Math.PI/2.1;
+  threeControls.update();
+
+  // Lighting
+  const ambient=new THREE.AmbientLight(0x404040,0.6);
+  threeScene.add(ambient);
+  const hemi=new THREE.HemisphereLight(0x87CEEB,0x8BC34A,0.3);
+  threeScene.add(hemi);
+
+  // Sun (directional light)
+  threeSunLight=new THREE.DirectionalLight(0xffffff,1.2);
+  threeSunLight.castShadow=true;
+  threeSunLight.shadow.mapSize.set(2048,2048);
+  threeSunLight.shadow.camera.left=-40;
+  threeSunLight.shadow.camera.right=50;
+  threeSunLight.shadow.camera.top=50;
+  threeSunLight.shadow.camera.bottom=-10;
+  threeSunLight.shadow.camera.near=1;
+  threeSunLight.shadow.camera.far=200;
+  threeSunLight.shadow.bias=-0.001;
+  threeScene.add(threeSunLight);
+  threeScene.add(threeSunLight.target);
+  threeSunLight.target.position.set(cx,0,-cy);
+
+  // Ground — large surrounding plane
+  const groundGeo=new THREE.PlaneGeometry(200,200);
+  const groundMat=new THREE.MeshLambertMaterial({color:0xC8C4B8});
+  const ground=new THREE.Mesh(groundGeo,groundMat);
+  ground.rotation.x=-Math.PI/2;
+  ground.position.set(cx,-0.05,-cy);
+  ground.receiveShadow=true;
+  threeScene.add(ground);
+
+  // Parcel ground
+  const parcelShape=new THREE.Shape();
+  parcelShape.moveTo(parcelM[0][0],parcelM[0][1]);
+  for(let i=1;i<parcelM.length;i++) parcelShape.lineTo(parcelM[i][0],parcelM[i][1]);
+  parcelShape.closePath();
+  const parcelGeo=new THREE.ShapeGeometry(parcelShape);
+  const parcelMat=new THREE.MeshLambertMaterial({color:0x8BC34A});
+  const parcelMesh=new THREE.Mesh(parcelGeo,parcelMat);
+  parcelMesh.rotation.x=-Math.PI/2;
+  parcelMesh.position.y=0.01;
+  parcelMesh.receiveShadow=true;
+  threeScene.add(parcelMesh);
+
+  // Road
+  const roadPts=[P6,P5,P4,P3,P2];
+  const roadShape=new THREE.Shape();
+  roadShape.moveTo(roadPts[0][0],roadPts[0][1]);
+  for(let i=1;i<roadPts.length;i++) roadShape.lineTo(roadPts[i][0],roadPts[i][1]);
+  // Offset outward for road width
+  for(let i=roadPts.length-1;i>=0;i--){
+    const p=roadPts[i];
+    const prev=roadPts[Math.max(0,i-1)],next=roadPts[Math.min(roadPts.length-1,i+1)];
+    const dx=next[0]-prev[0],dy=next[1]-prev[1],len=Math.hypot(dx,dy)||1;
+    roadShape.lineTo(p[0]+(-dy/len)*3.5,p[1]+(dx/len)*3.5);
+  }
+  roadShape.closePath();
+  const roadGeo=new THREE.ShapeGeometry(roadShape);
+  const roadMat=new THREE.MeshLambertMaterial({color:0x888888});
+  const roadMesh=new THREE.Mesh(roadGeo,roadMat);
+  roadMesh.rotation.x=-Math.PI/2;
+  roadMesh.position.y=0.02;
+  roadMesh.receiveShadow=true;
+  threeScene.add(roadMesh);
+
+  // Fence
+  const fenceH=1.5;
+  const fenceMat=new THREE.MeshPhongMaterial({color:0x8B6914});
+  for(let i=0;i<parcelM.length;i++){
+    const a=parcelM[i],b=parcelM[(i+1)%parcelM.length];
+    // Post at each vertex
+    const postGeo=new THREE.BoxGeometry(0.15,fenceH,0.15);
+    const post=new THREE.Mesh(postGeo,fenceMat);
+    post.position.set(a[0],fenceH/2,-a[1]);
+    post.castShadow=true;
+    threeScene.add(post);
+    // Rail between vertices
+    const dx=b[0]-a[0],dz=-(b[1]-a[1]);
+    const len=Math.hypot(dx,dz);
+    const railGeo=new THREE.BoxGeometry(len,0.08,0.06);
+    const rail=new THREE.Mesh(railGeo,fenceMat);
+    rail.position.set((a[0]+b[0])/2,fenceH*0.7,-(a[1]+b[1])/2);
+    rail.rotation.y=-Math.atan2(dz,dx);
+    rail.castShadow=true;
+    threeScene.add(rail);
+    // Lower rail
+    const rail2=rail.clone();
+    rail2.position.y=fenceH*0.35;
+    threeScene.add(rail2);
+  }
+
+  villaGroup=new THREE.Group();
+  threeScene.add(villaGroup);
+
+  threeInited=true;
+}
+
+// ─── Build Villa Meshes ───
+const VILLA_COLORS=[0xD85A30,0x185FA5,0x534AB7];
+
+function buildVillas3D(){
+  if(!villaGroup)return;
+  // Clear previous
+  while(villaGroup.children.length) villaGroup.remove(villaGroup.children[0]);
+
+  const isFree=document.getElementById('tab-free').classList.contains('active');
+  const height=VILLA_FLOORS*FLOOR_H;
+
+  if(isFree){
+    // Free mode: use villas array with rotCorners
+    for(let i=0;i<villas.length;i++){
+      const v=villas[i];
+      const corners=rotCorners(v.cx,v.cy,vw,vh,v.angle);
+      addExtrudedBuilding(corners,height,VILLA_COLORS[i]);
+    }
+    // Voronoi lot boundaries
+    const lotColors3D=[0xD85A30,0x185FA5,0x534AB7];
+    for(let i=0;i<dynamicLots.length;i++){
+      if(dynamicLots[i]&&dynamicLots[i].length>=3)
+        addLotOverlay(dynamicLots[i],lotColors3D[i]);
+    }
+  } else {
+    // Parcelled mode
+    const dir=getDivDir();
+    if(dir==='optimum3'){
+      // Radial mode: use buildable areas as villa footprints
+      for(let i=0;i<3;i++){
+        const poly=pBuildParcels[i];
+        if(poly&&poly.length>=3) addExtrudedBuilding(poly,height,VILLA_COLORS[i]);
+      }
+    } else if(dir==='optimum'||dir==='optimum2'){
+      // A & B from rectangles
+      if(pCommonRectAB&&pCommonRectAB.rects){
+        for(let i=0;i<2;i++){
+          const r=pCommonRectAB.rects[i];
+          if(r) addExtrudedBuilding(r,height,VILLA_COLORS[i]);
+        }
+      }
+      // C from clipped polygon
+      if(pClipC&&pClipC.length>=3) addExtrudedBuilding(pClipC,height,VILLA_COLORS[2]);
+    } else {
+      // Other modes: use pVillaPolys
+      for(let i=0;i<3;i++){
+        const poly=pVillaPolys[i];
+        if(poly&&poly.length>=3) addExtrudedBuilding(poly,height,VILLA_COLORS[i]);
+      }
+    }
+    // Parcel lot overlays (all parcelled modes)
+    const lotColors3D=[0xD85A30,0x185FA5,0x534AB7];
+    for(let i=0;i<3;i++){
+      if(pParcels[i]&&pParcels[i].length>=3)
+        addLotOverlay(pParcels[i],lotColors3D[i]);
+    }
+  }
+}
+
+function addLotOverlay(poly,color){
+  // Colored ground overlay for the lot
+  const shape=new THREE.Shape();
+  shape.moveTo(poly[0][0],poly[0][1]);
+  for(let i=1;i<poly.length;i++) shape.lineTo(poly[i][0],poly[i][1]);
+  shape.closePath();
+  const geo=new THREE.ShapeGeometry(shape);
+  const mat=new THREE.MeshLambertMaterial({color,transparent:true,opacity:0.15});
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.rotation.x=-Math.PI/2;
+  mesh.position.y=0.03;
+  mesh.receiveShadow=true;
+  villaGroup.add(mesh);
+
+  // Lot boundary line
+  const points=[];
+  for(let i=0;i<=poly.length;i++){
+    const p=poly[i%poly.length];
+    points.push(new THREE.Vector3(p[0],0.08,-p[1]));
+  }
+  const lineGeo=new THREE.BufferGeometry().setFromPoints(points);
+  const lineMat=new THREE.LineBasicMaterial({color,opacity:0.5,transparent:true});
+  const line=new THREE.Line(lineGeo,lineMat);
+  villaGroup.add(line);
+}
+
+function addExtrudedBuilding(corners2D,height,color){
+  const shape=new THREE.Shape();
+  shape.moveTo(corners2D[0][0],corners2D[0][1]);
+  for(let i=1;i<corners2D.length;i++) shape.lineTo(corners2D[i][0],corners2D[i][1]);
+  shape.closePath();
+
+  const extrudeSettings={depth:height,bevelEnabled:false};
+  const geo=new THREE.ExtrudeGeometry(shape,extrudeSettings);
+  // ExtrudeGeometry extrudes along Z by default; we need Y (up)
+  // Rotate the geometry: swap Z→Y
+  geo.rotateX(-Math.PI/2);
+
+  const mat=new THREE.MeshPhongMaterial({color,flatShading:false});
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.castShadow=true;
+  mesh.receiveShadow=true;
+  villaGroup.add(mesh);
+
+  // Roof: slight darker cap on top
+  const roofGeo=new THREE.ShapeGeometry(shape);
+  roofGeo.rotateX(-Math.PI/2);
+  const roofMat=new THREE.MeshPhongMaterial({color:new THREE.Color(color).multiplyScalar(0.7)});
+  const roof=new THREE.Mesh(roofGeo,roofMat);
+  roof.position.y=height+0.05;
+  roof.receiveShadow=true;
+  villaGroup.add(roof);
+}
+
+// ─── Sun Update ───
+function updateSun3D(){
+  const isFree=document.getElementById('tab-free').classList.contains('active');
+  const slider=isFree?document.getElementById('timeSlider'):document.getElementById('pTimeSlider');
+  const monthSel=isFree?document.getElementById('monthSelect'):document.getElementById('pMonthSelect');
+  const display=isFree?document.getElementById('timeDisplay'):document.getElementById('pTimeDisplay');
+  const info=isFree?document.getElementById('sunInfo'):document.getElementById('pSunInfo');
+
+  const hour=parseFloat(slider.value);
+  const month=parseInt(monthSel.value);
+  const h=Math.floor(hour),m=Math.round((hour-h)*60);
+  display.textContent=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
+
+  const sun=sunDirection(month,hour);
+  if(sun&&threeSunLight){
+    threeSunLight.position.set(
+      threeSunLight.target.position.x+sun.x,
+      sun.y,
+      threeSunLight.target.position.z+sun.z
+    );
+    threeSunLight.intensity=Math.max(0.3,Math.sin(sun.elevation)*1.5);
+    const elevDeg=(sun.elevation*180/Math.PI).toFixed(1);
+    const azDeg=(sun.azimuth*180/Math.PI).toFixed(0);
+    info.textContent='Güneş: yükseklik '+elevDeg+'° · azimut '+azDeg+'°';
+  } else if(threeSunLight){
+    threeSunLight.intensity=0;
+    info.textContent='Güneş batmış';
+  }
+}
+
+// ─── Animation Loop ───
+// Arrow key panning state
+var keyPan={left:false,right:false,up:false,down:false};
+var PAN_SPEED=0.5;
+
+document.addEventListener('keydown',function(e){
+  if(!threeIs3D)return;
+  if(e.key==='ArrowLeft'){keyPan.left=true;e.preventDefault()}
+  else if(e.key==='ArrowRight'){keyPan.right=true;e.preventDefault()}
+  else if(e.key==='ArrowUp'){keyPan.up=true;e.preventDefault()}
+  else if(e.key==='ArrowDown'){keyPan.down=true;e.preventDefault()}
+});
+document.addEventListener('keyup',function(e){
+  if(e.key==='ArrowLeft')keyPan.left=false;
+  else if(e.key==='ArrowRight')keyPan.right=false;
+  else if(e.key==='ArrowUp')keyPan.up=false;
+  else if(e.key==='ArrowDown')keyPan.down=false;
+});
+
+function animateThree(){
+  if(!threeIs3D)return;
+  threeAnimId=requestAnimationFrame(animateThree);
+  // Arrow key panning: move camera + target together
+  if(keyPan.left||keyPan.right||keyPan.up||keyPan.down){
+    var fwd=new THREE.Vector3();
+    threeCamera.getWorldDirection(fwd);
+    fwd.y=0;fwd.normalize();
+    var right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+    var move=new THREE.Vector3();
+    if(keyPan.left)move.add(right.clone().multiplyScalar(-PAN_SPEED));
+    if(keyPan.right)move.add(right.clone().multiplyScalar(PAN_SPEED));
+    if(keyPan.up)move.add(fwd.clone().multiplyScalar(PAN_SPEED));
+    if(keyPan.down)move.add(fwd.clone().multiplyScalar(-PAN_SPEED));
+    threeCamera.position.add(move);
+    threeControls.target.add(move);
+  }
+  threeControls.update();
+  threeRenderer.render(threeScene,threeCamera);
+}
+
+// ─── Wire up 3D controls ───
+['timeSlider','pTimeSlider'].forEach(id=>{
+  const el=document.getElementById(id);
+  if(el) el.addEventListener('input',updateSun3D);
+});
+['monthSelect','pMonthSelect'].forEach(id=>{
+  const el=document.getElementById(id);
+  if(el) el.addEventListener('change',updateSun3D);
+});
+
+</script>
+</body>
+</html>
