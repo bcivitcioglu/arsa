@@ -222,6 +222,8 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
           <option value="optimum3">&#x25C6; Optimum 3 (70m²)</option>
           <option value="optimum4">&#x25C6; Optimum 4 (70m²)</option>
           <option value="optimum5">&#x25C6; Optimum 5 (Y-Radyal)</option>
+          <option value="optimum6">&#x25C6; Optimum 6 (80m² + çıkma)</option>
+          <option value="optimum7">&#x25C6; Optimum 7 (70m² + çıkma)</option>
         </select>
       </div>
       <div class="sb-section">
@@ -441,7 +443,7 @@ function projectWeights(w,c){for(let r=0;r<20;r++)for(const{i,j,minDiff,maxDiff}
 function voronoiLots(){const centers=STATE.villas.map(v=>[v.cx,v.cy]),target=polyArea(parcelM)/3,constraints=weightConstraints(centers),w=[0,0,0];for(let it=0;it<80;it++){const lots=computeLots(centers,w),areas=lots.map(l=>l.length>=3?polyArea(l):0);let maxErr=0;for(let i=0;i<3;i++)maxErr=Math.max(maxErr,Math.abs(areas[i]-target));if(maxErr<3)break;for(let i=0;i<3;i++)w[i]-=.05*(areas[i]-target);projectWeights(w,constraints)}return computeLots(centers,w)}
 
 // ─── Parcelled ───
-function updateSweepDir(){const d=STATE.divDir;if(d==='p6p4'){pRoadNx=pSweep2[0];pRoadNy=pSweep2[1]}else if(d==='p1p2'){pRoadNx=pSweep3[0];pRoadNy=pSweep3[1]}else if(d==='perpp1p2'){pRoadNx=pSweep4[0];pRoadNy=pSweep4[1]}else if(d==='optimum'||d==='optimum2'||d==='optimum3'||d==='optimum4'){if(!STATE.pOptimalAngle)STATE.pOptimalAngle=findOptimalSweepAngle();pRoadNx=Math.cos(STATE.pOptimalAngle);pRoadNy=Math.sin(STATE.pOptimalAngle)}else if(d==='optimum5'){pRoadNx=pSweep1[0];pRoadNy=pSweep1[1]}else{pRoadNx=pSweep1[0];pRoadNy=pSweep1[1]}}
+function updateSweepDir(){const d=STATE.divDir;if(d==='p6p4'){pRoadNx=pSweep2[0];pRoadNy=pSweep2[1]}else if(d==='p1p2'){pRoadNx=pSweep3[0];pRoadNy=pSweep3[1]}else if(d==='perpp1p2'){pRoadNx=pSweep4[0];pRoadNy=pSweep4[1]}else if(d==='optimum'||d==='optimum2'||d==='optimum3'||d==='optimum4'||d==='optimum6'||d==='optimum7'){if(!STATE.pOptimalAngle)STATE.pOptimalAngle=findOptimalSweepAngle();pRoadNx=Math.cos(STATE.pOptimalAngle);pRoadNy=Math.sin(STATE.pOptimalAngle)}else if(d==='optimum5'){pRoadNx=pSweep1[0];pRoadNy=pSweep1[1]}else{pRoadNx=pSweep1[0];pRoadNy=pSweep1[1]}}
 function roadProj(p){return(p[0]-P1[0])*pRoadNx+(p[1]-P1[1])*pRoadNy}
 function parcelSliceBand(tL,tH){let p=[...parcelM];p=clipPolyByLine(p,P1[0]+tH*pRoadNx,P1[1]+tH*pRoadNy,pRoadNx,pRoadNy);p=clipPolyByLine(p,P1[0]+tL*pRoadNx,P1[1]+tL*pRoadNy,-pRoadNx,-pRoadNy);return p}
 function clipBuildBand(tL,tH){let p=[...buildM];p=clipPolyByLine(p,P1[0]+tH*pRoadNx,P1[1]+tH*pRoadNy,pRoadNx,pRoadNy);p=clipPolyByLine(p,P1[0]+tL*pRoadNx,P1[1]+tL*pRoadNy,-pRoadNx,-pRoadNy);return p}
@@ -494,8 +496,8 @@ function computeVillaPolys(){
     STATE.pCommonRectAB=null;STATE.pClipC=null;return;
   }
   for(let i=0;i<3;i++){const bp=STATE.pBuildParcels[i];if(bp&&bp.length>=3&&polyArea(bp)>=VILLA_AREA){const[nx,ny]=rsn(bp);STATE.pVillaPolys[i]=clipToArea(bp,VILLA_AREA,nx,ny)}else STATE.pVillaPolys[i]=bp||[]}
-  if(STATE.divDir==='optimum'||STATE.divDir==='optimum2'||STATE.divDir==='optimum3'||STATE.divDir==='optimum4'){
-    const area=(STATE.divDir==='optimum3'||STATE.divDir==='optimum4')?70:80;
+  if(STATE.divDir==='optimum'||STATE.divDir==='optimum2'||STATE.divDir==='optimum3'||STATE.divDir==='optimum4'||STATE.divDir==='optimum6'||STATE.divDir==='optimum7'){
+    const area=(STATE.divDir==='optimum3'||STATE.divDir==='optimum4'||STATE.divDir==='optimum7')?70:80;
     const flip=(STATE.divDir==='optimum2'||STATE.divDir==='optimum4');
     STATE.pCommonRectAB=findMaxCommonRect([0,1],area,flip);
     const bpC=STATE.pBuildParcels[2];
@@ -607,7 +609,7 @@ function renderParcelledMode(){
   const bStrokes=['var(--lot1)','var(--lot2)','var(--lot3)'];
   for(let i=0;i<3;i++){const bp=STATE.pBuildParcels[i];if(!bp||bp.length<3)continue;h+=`<polygon points="${ps(bp)}" fill="${bFills[i]}" stroke="${bStrokes[i]}" stroke-width="1" stroke-dasharray="3,2" opacity=".7"/>`}
   // Villa polys (for non-optimum modes AND optimum5)
-  const isOpt1234=STATE.divDir==='optimum'||STATE.divDir==='optimum2'||STATE.divDir==='optimum3'||STATE.divDir==='optimum4';
+  const isOpt1234=STATE.divDir==='optimum'||STATE.divDir==='optimum2'||STATE.divDir==='optimum3'||STATE.divDir==='optimum4'||STATE.divDir==='optimum6'||STATE.divDir==='optimum7';
   if(!isOpt1234){
     for(let i=0;i<3;i++){const p=STATE.pVillaPolys[i];if(!p||p.length<3)continue;h+=`<polygon points="${ps(p)}" fill="rgba(255,255,255,.4)" stroke="${bStrokes[i]}" stroke-width="1.8" stroke-dasharray="5,3"/>`;const c=polyCentroid(p),cs=S(c[0],c[1]);h+=`<text x="${cs[0]}" y="${cs[1]+3}" text-anchor="middle" font-size="8" font-weight="700" fill="${bStrokes[i]}" pointer-events="none">${polyArea(p).toFixed(0)} m²</text>`}
   }
@@ -996,7 +998,8 @@ function buildHouseFromPoly(poly2D,height,color){
   return g;
 }
 // Modern villa builder for Optimum 1-4 modes — unified edge-based approach for all shapes
-function buildModernVilla(poly2D,height,color){
+// rectCantilever: if true, apply 1.5m cantilever to rectangle villas (on 2 opposite long edges)
+function buildModernVilla(poly2D,height,color,rectCantilever){
   var g=new THREE.Group();
   var n=poly2D.length;
   var cent=polyCentroid(poly2D);
@@ -1039,38 +1042,187 @@ function buildModernVilla(poly2D,height,color){
   var W=maxU-minU,D=maxV-minV;
   var F1=height*0.5,F2=height-F1,SLAB2=0.22,railH=1.05,railTh=0.035;
   var f2base=F1+SLAB2,roofYv=f2base+F2+SLAB2,glassInset=0.08;
-  function mvExtrudePoly(yBase,h2,mat){var sh=new THREE.Shape();sh.moveTo(poly2D[0][0],poly2D[0][1]);for(var si=1;si<n;si++)sh.lineTo(poly2D[si][0],poly2D[si][1]);sh.closePath();var geo=new THREE.ExtrudeGeometry(sh,{depth:h2,bevelEnabled:false});geo.rotateX(-Math.PI/2);geo.translate(0,yBase,0);var m=new THREE.Mesh(geo,mat);m.castShadow=true;m.receiveShadow=true;g.add(m)}
-  function mvPolySlab(yPos,h2,mat){var sh=new THREE.Shape();sh.moveTo(poly2D[0][0],poly2D[0][1]);for(var si=1;si<n;si++)sh.lineTo(poly2D[si][0],poly2D[si][1]);sh.closePath();var geo=new THREE.ExtrudeGeometry(sh,{depth:h2,bevelEnabled:false});geo.rotateX(-Math.PI/2);geo.translate(0,yPos,0);var m=new THREE.Mesh(geo,mat);m.receiveShadow=true;g.add(m)}
-  // Walls and slabs
-  mvExtrudePoly(0,F1,matConcrete);mvPolySlab(F1,SLAB2,matConcreteSlab);
-  mvExtrudePoly(f2base,F2,matConcreteF2);mvPolySlab(f2base+F2,SLAB2,matConcreteSlab);
+  function mvExtrudePoly(polyArr,yBase,h2,mat){var pn=polyArr.length;var sh=new THREE.Shape();sh.moveTo(polyArr[0][0],polyArr[0][1]);for(var si=1;si<pn;si++)sh.lineTo(polyArr[si][0],polyArr[si][1]);sh.closePath();var geo=new THREE.ExtrudeGeometry(sh,{depth:h2,bevelEnabled:false});geo.rotateX(-Math.PI/2);geo.translate(0,yBase,0);var m=new THREE.Mesh(geo,mat);m.castShadow=true;m.receiveShadow=true;g.add(m)}
+  function mvPolySlab(polyArr,yPos,h2,mat){var pn=polyArr.length;var sh=new THREE.Shape();sh.moveTo(polyArr[0][0],polyArr[0][1]);for(var si=1;si<pn;si++)sh.lineTo(polyArr[si][0],polyArr[si][1]);sh.closePath();var geo=new THREE.ExtrudeGeometry(sh,{depth:h2,bevelEnabled:false});geo.rotateX(-Math.PI/2);geo.translate(0,yPos,0);var m=new THREE.Mesh(geo,mat);m.receiveShadow=true;g.add(m)}
+  // Floor 1 walls
+  mvExtrudePoly(poly2D,0,F1,matConcrete);
   // Edge info
   var edges=[],longIdx=0,longLen=0;
   for(var ei=0;ei<n;ei++){var ea=poly2D[ei],eb=poly2D[(ei+1)%n];var edx2=eb[0]-ea[0],edy2=eb[1]-ea[1],eLen2=Math.hypot(edx2,edy2);var eAngle=Math.atan2(edy2,edx2);var nx2=-edy2/eLen2,ny2=edx2/eLen2;var emx2=(ea[0]+eb[0])/2,emy2=(ea[1]+eb[1])/2;if((emx2+nx2-cent[0])*(emx2+nx2-cent[0])+(emy2+ny2-cent[1])*(emy2+ny2-cent[1])<(emx2-nx2-cent[0])*(emx2-nx2-cent[0])+(emy2-ny2-cent[1])*(emy2-ny2-cent[1])){nx2=-nx2;ny2=-ny2}edges.push({ax:ea[0],ay:ea[1],bx:eb[0],by:eb[1],dx:edx2,dy:edy2,len:eLen2,angle:eAngle,ux:edx2/eLen2,uy:edy2/eLen2,nx:nx2,ny:ny2});if(eLen2>longLen){longLen=eLen2;longIdx=ei}}
   var sorted=edges.map(function(e2,i2){return{idx:i2,len:e2.len}}).sort(function(a2,b2){return b2.len-a2.len});
-  // Facade: glass, mullions, cladding, balcony, door
+
+  // === CANTILEVER: floor 2 extends 1.5m outward (pentagon: road+garden edges; rectangle+flag: 2 long edges) ===
+  var f2poly=poly2D, f2edges=edges, f2n=n, f2longIdx=longIdx, f2cent=cent, hasCantilever=false;
+  if(n===4 && rectCantilever){
+    var CANT_D=1.5;
+    // Identify the 2 short edges (road + garden sides — perpendicular to road direction)
+    var isRoad=[false,false,false,false];
+    if(edges[0].len<edges[1].len){isRoad[0]=true;isRoad[2]=true}
+    else{isRoad[1]=true;isRoad[3]=true}
+    f2poly=[];
+    for(var vi=0;vi<n;vi++){
+      var prevIdx=(vi-1+n)%n;
+      var prevR=isRoad[prevIdx], nextR=isRoad[vi];
+      var ePrev=edges[prevIdx], eNext=edges[vi];
+      var v=poly2D[vi];
+      if(prevR && nextR){
+        var a1x=poly2D[prevIdx][0]+CANT_D*ePrev.nx, a1y=poly2D[prevIdx][1]+CANT_D*ePrev.ny;
+        var a2x=v[0]+CANT_D*ePrev.nx, a2y=v[1]+CANT_D*ePrev.ny;
+        var b1x=v[0]+CANT_D*eNext.nx, b1y=v[1]+CANT_D*eNext.ny;
+        var b2x=poly2D[(vi+1)%n][0]+CANT_D*eNext.nx, b2y=poly2D[(vi+1)%n][1]+CANT_D*eNext.ny;
+        var denomM=(a1x-a2x)*(b1y-b2y)-(a1y-a2y)*(b1x-b2x);
+        if(Math.abs(denomM)>1e-6){
+          var tM=((a1x-b1x)*(b1y-b2y)-(a1y-b1y)*(b1x-b2x))/denomM;
+          f2poly.push([a1x+tM*(a2x-a1x), a1y+tM*(a2y-a1y)]);
+        }else{
+          f2poly.push([v[0]+CANT_D*(ePrev.nx+eNext.nx)/2, v[1]+CANT_D*(ePrev.ny+eNext.ny)/2]);
+        }
+      }else if(prevR && !nextR){
+        f2poly.push([v[0]+CANT_D*ePrev.nx, v[1]+CANT_D*ePrev.ny]);
+        f2poly.push([v[0],v[1]]);
+      }else if(!prevR && nextR){
+        f2poly.push([v[0],v[1]]);
+        f2poly.push([v[0]+CANT_D*eNext.nx, v[1]+CANT_D*eNext.ny]);
+      }else{
+        f2poly.push([v[0],v[1]]);
+      }
+    }
+    // Recompute centroid and edges for f2poly
+    f2cent=[0,0]; for(var cci=0;cci<f2poly.length;cci++){f2cent[0]+=f2poly[cci][0];f2cent[1]+=f2poly[cci][1]} f2cent[0]/=f2poly.length; f2cent[1]/=f2poly.length;
+    f2edges=[]; f2longIdx=0; var f2longLen=0;
+    for(var fei=0;fei<f2poly.length;fei++){
+      var fea=f2poly[fei], feb=f2poly[(fei+1)%f2poly.length];
+      var fdx=feb[0]-fea[0], fdy=feb[1]-fea[1], flen=Math.hypot(fdx,fdy);
+      if(flen<1e-6) continue;
+      var fang=Math.atan2(fdy,fdx);
+      var fnx=-fdy/flen, fny=fdx/flen;
+      var fmx=(fea[0]+feb[0])/2, fmy=(fea[1]+feb[1])/2;
+      if((fmx+fnx-f2cent[0])*(fmx+fnx-f2cent[0])+(fmy+fny-f2cent[1])*(fmy+fny-f2cent[1])<(fmx-fnx-f2cent[0])*(fmx-fnx-f2cent[0])+(fmy-fny-f2cent[1])*(fmy-fny-f2cent[1])){fnx=-fnx;fny=-fny}
+      f2edges.push({ax:fea[0],ay:fea[1],bx:feb[0],by:feb[1],dx:fdx,dy:fdy,len:flen,angle:fang,ux:fdx/flen,uy:fdy/flen,nx:fnx,ny:fny});
+      if(flen>f2longLen){f2longLen=flen;f2longIdx=f2edges.length-1}
+    }
+    f2n=f2edges.length;
+    hasCantilever=true;
+  }
+  else if(n>=5 && typeof buildM!=='undefined' && buildM && buildM.length>=3){
+    var CANT_D=1.5, TOL_ROAD=1.2;
+    var isRoad=[];
+    for(var iR=0;iR<n;iR++){
+      var eR=edges[iR], mxR=(eR.ax+eR.bx)/2, myR=(eR.ay+eR.by)/2;
+      var minD=Infinity;
+      for(var jR=0;jR<buildM.length;jR++){
+        var baR=buildM[jR], bbR=buildM[(jR+1)%buildM.length];
+        var bdxR=bbR[0]-baR[0], bdyR=bbR[1]-baR[1], blen2R=bdxR*bdxR+bdyR*bdyR;
+        if(blen2R<1e-9) continue;
+        var tR=((mxR-baR[0])*bdxR+(myR-baR[1])*bdyR)/blen2R;
+        tR=Math.max(0,Math.min(1,tR));
+        var pxR=baR[0]+tR*bdxR, pyR=baR[1]+tR*bdyR;
+        var dR=Math.hypot(mxR-pxR,myR-pyR);
+        if(dR<minD) minD=dR;
+      }
+      isRoad.push(minD<TOL_ROAD);
+    }
+    // Also mark the shorter of exactly 2 interior edges as cantilever (garden side)
+    var interiorIdxList=[]; for(var iei=0;iei<n;iei++) if(!isRoad[iei]) interiorIdxList.push(iei);
+    if(interiorIdxList.length===2){
+      var shortestIntIdx=interiorIdxList[0];
+      if(edges[interiorIdxList[1]].len<edges[shortestIntIdx].len) shortestIntIdx=interiorIdxList[1];
+      isRoad[shortestIntIdx]=true;
+    }
+    var roadCount=0; for(var rcI=0;rcI<isRoad.length;rcI++) if(isRoad[rcI]) roadCount++;
+    if(roadCount>=1){
+      hasCantilever=true;
+      f2poly=[];
+      for(var vi=0;vi<n;vi++){
+        var prevIdx=(vi-1+n)%n;
+        var prevR=isRoad[prevIdx], nextR=isRoad[vi];
+        var ePrev=edges[prevIdx], eNext=edges[vi];
+        var v=poly2D[vi];
+        if(prevR && nextR){
+          // Miter: intersection of two offset road edges
+          var a1x=poly2D[prevIdx][0]+CANT_D*ePrev.nx, a1y=poly2D[prevIdx][1]+CANT_D*ePrev.ny;
+          var a2x=v[0]+CANT_D*ePrev.nx, a2y=v[1]+CANT_D*ePrev.ny;
+          var b1x=v[0]+CANT_D*eNext.nx, b1y=v[1]+CANT_D*eNext.ny;
+          var b2x=poly2D[(vi+1)%n][0]+CANT_D*eNext.nx, b2y=poly2D[(vi+1)%n][1]+CANT_D*eNext.ny;
+          var denomM=(a1x-a2x)*(b1y-b2y)-(a1y-a2y)*(b1x-b2x);
+          if(Math.abs(denomM)>1e-6){
+            var tM=((a1x-b1x)*(b1y-b2y)-(a1y-b1y)*(b1x-b2x))/denomM;
+            f2poly.push([a1x+tM*(a2x-a1x), a1y+tM*(a2y-a1y)]);
+          }else{
+            f2poly.push([v[0]+CANT_D*(ePrev.nx+eNext.nx)/2, v[1]+CANT_D*(ePrev.ny+eNext.ny)/2]);
+          }
+        }else if(prevR && !nextR){
+          // End of road edge → start of interior
+          f2poly.push([v[0]+CANT_D*ePrev.nx, v[1]+CANT_D*ePrev.ny]);
+          f2poly.push([v[0],v[1]]);
+        }else if(!prevR && nextR){
+          // End of interior → start of road
+          f2poly.push([v[0],v[1]]);
+          f2poly.push([v[0]+CANT_D*eNext.nx, v[1]+CANT_D*eNext.ny]);
+        }else{
+          f2poly.push([v[0],v[1]]);
+        }
+      }
+      // Recompute centroid for f2poly
+      f2cent=[0,0]; for(var cci=0;cci<f2poly.length;cci++){f2cent[0]+=f2poly[cci][0];f2cent[1]+=f2poly[cci][1]} f2cent[0]/=f2poly.length; f2cent[1]/=f2poly.length;
+      // Compute f2edges
+      f2edges=[]; f2longIdx=0; var f2longLen=0;
+      for(var fei=0;fei<f2poly.length;fei++){
+        var fea=f2poly[fei], feb=f2poly[(fei+1)%f2poly.length];
+        var fdx=feb[0]-fea[0], fdy=feb[1]-fea[1], flen=Math.hypot(fdx,fdy);
+        if(flen<1e-6) continue;
+        var fang=Math.atan2(fdy,fdx);
+        var fnx=-fdy/flen, fny=fdx/flen;
+        var fmx=(fea[0]+feb[0])/2, fmy=(fea[1]+feb[1])/2;
+        if((fmx+fnx-f2cent[0])*(fmx+fnx-f2cent[0])+(fmy+fny-f2cent[1])*(fmy+fny-f2cent[1])<(fmx-fnx-f2cent[0])*(fmx-fnx-f2cent[0])+(fmy-fny-f2cent[1])*(fmy-fny-f2cent[1])){fnx=-fnx;fny=-fny}
+        f2edges.push({ax:fea[0],ay:fea[1],bx:feb[0],by:feb[1],dx:fdx,dy:fdy,len:flen,angle:fang,ux:fdx/flen,uy:fdy/flen,nx:fnx,ny:fny});
+        if(flen>f2longLen){f2longLen=flen;f2longIdx=f2edges.length-1}
+      }
+      f2n=f2edges.length;
+    }
+  }
+
+  // Floor 2 walls + slabs (use f2poly for cantilever effect; mid-slab creates visible overhang ceiling)
+  mvPolySlab(f2poly,F1,SLAB2,matConcreteSlab);
+  mvExtrudePoly(f2poly,f2base,F2,matConcreteF2);
+  mvPolySlab(f2poly,f2base+F2,SLAB2,matConcreteSlab);
+
+  // Floor 1 facade: glass, mullions, front door (uses poly2D edges)
   for(ei=0;ei<n;ei++){var e=edges[ei];if(e.len<2)continue;var faceAngle=Math.atan2(e.nx,-e.ny);var isFront=(ei===longIdx);
-    var glassW=e.len*0.55,g1H2=F1*0.75,g2H2=F2*0.8,gMat=isFront?matGlassLit:matGlass,gOff=0.06;
-    // Floor 1 glass — same for all edges
+    var glassW=e.len*0.55,g1H2=F1*0.75,gMat=isFront?matGlassLit:matGlass,gOff=0.06;
+    // Floor 1 glass
     var gcx=e.ax+0.5*e.dx+e.nx*gOff,gcz=e.ay+0.5*e.dy+e.ny*gOff;
     var gm1=new THREE.Mesh(new THREE.PlaneGeometry(glassW,g1H2),gMat);gm1.position.set(gcx,F1*0.43,-gcz);gm1.rotation.y=faceAngle;g.add(gm1);
-    // Floor 2 glass — on front edge: smaller and shifted left to make room for balcony glass door
-    var g2W=isFront?e.len*0.22:glassW;
-    var g2T=isFront?0.2:0.5;
-    var g2cx=e.ax+g2T*e.dx+e.nx*gOff, g2cz=e.ay+g2T*e.dy+e.ny*gOff;
-    var gm2=new THREE.Mesh(new THREE.PlaneGeometry(g2W,g2H2),gMat);gm2.position.set(g2cx,f2base+F2*0.45,-g2cz);gm2.rotation.y=faceAngle;g.add(gm2);
-    // Floor 1 mullions (based on glassW/t=0.5)
+    // Floor 1 mullions
     var mullionCount=Math.max(2,Math.round(glassW/2));
     for(var mi2=0;mi2<mullionCount;mi2++){var mt=(mi2+1)/(mullionCount+1);var mmx=e.ax+(0.5-glassW/e.len*0.5+mt*glassW/e.len)*e.dx+e.nx*(gOff+0.01);var mmz=e.ay+(0.5-glassW/e.len*0.5+mt*glassW/e.len)*e.dy+e.ny*(gOff+0.01);
       var mv1=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);mv1.position.set(mmx,F1*0.43,-mmz);mv1.rotation.y=faceAngle;g.add(mv1)}
-    // Floor 2 mullions (based on g2W/g2T)
-    var mullionCountF2=Math.max(2,Math.round(g2W/2));
-    for(var mi3=0;mi3<mullionCountF2;mi3++){var mt2=(mi3+1)/(mullionCountF2+1);var m2x=e.ax+(g2T-g2W/e.len*0.5+mt2*g2W/e.len)*e.dx+e.nx*(gOff+0.01);var m2z=e.ay+(g2T-g2W/e.len*0.5+mt2*g2W/e.len)*e.dy+e.ny*(gOff+0.01);
-      var mv2=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g2H2),matFrame);mv2.position.set(m2x,f2base+F2*0.45,-m2z);mv2.rotation.y=faceAngle;g.add(mv2)}
     // Horizontal mullion on floor 1
     var hmx=e.ax+0.5*e.dx+e.nx*(gOff+0.01),hmz=e.ay+0.5*e.dy+e.ny*(gOff+0.01);
     var hm1=new THREE.Mesh(new THREE.PlaneGeometry(glassW,0.05),matFrame);hm1.position.set(hmx,F1*0.6,-hmz);hm1.rotation.y=faceAngle;g.add(hm1);
-    if(isFront){var doorGlassW=e.len*0.3,doorGlassH=F2*0.9;var dgx=e.ax+0.6*e.dx+e.nx*(gOff+0.01),dgz=e.ay+0.6*e.dy+e.ny*(gOff+0.01);
+    // Front door on floor 1 front edge
+    if(isFront){
+      var doorH3=Math.min(2.4,F1*0.75);var doorX=e.ax+0.1*e.dx+e.nx*0.06,doorZ=e.ay+0.1*e.dy+e.ny*0.06;
+      var doorMesh=new THREE.Mesh(new THREE.PlaneGeometry(1.2,doorH3),matDoor);doorMesh.position.set(doorX,doorH3/2,-doorZ);doorMesh.rotation.y=faceAngle;g.add(doorMesh);
+      var dfx=e.ax+0.1*e.dx+e.nx*0.055,dfz=e.ay+0.1*e.dy+e.ny*0.055;var df1=new THREE.Mesh(new THREE.PlaneGeometry(1.35,0.08),matFrame);df1.position.set(dfx,doorH3+0.04,-dfz);df1.rotation.y=faceAngle;g.add(df1);
+    }
+  }
+
+  // Floor 2 facade + balcony (uses f2edges — extended cantilever polygon for pentagon)
+  for(var f2ei=0;f2ei<f2n;f2ei++){var e=f2edges[f2ei];if(e.len<2)continue;var faceAngle=Math.atan2(e.nx,-e.ny);var isFront=(f2ei===f2longIdx);
+    var g2H2=F2*0.8,gMat=isFront?matGlassLit:matGlass,gOff=0.06;
+    // Floor 2 glass — smaller + shifted on front edge (to make room for balcony glass door)
+    var g2W=isFront?e.len*0.22:e.len*0.55;
+    var g2T=isFront?0.2:0.5;
+    var g2cx=e.ax+g2T*e.dx+e.nx*gOff, g2cz=e.ay+g2T*e.dy+e.ny*gOff;
+    var gm2=new THREE.Mesh(new THREE.PlaneGeometry(g2W,g2H2),gMat);gm2.position.set(g2cx,f2base+F2*0.45,-g2cz);gm2.rotation.y=faceAngle;g.add(gm2);
+    // Floor 2 mullions
+    var mullionCountF2=Math.max(2,Math.round(g2W/2));
+    for(var mi3=0;mi3<mullionCountF2;mi3++){var mt2=(mi3+1)/(mullionCountF2+1);var m2x=e.ax+(g2T-g2W/e.len*0.5+mt2*g2W/e.len)*e.dx+e.nx*(gOff+0.01);var m2z=e.ay+(g2T-g2W/e.len*0.5+mt2*g2W/e.len)*e.dy+e.ny*(gOff+0.01);
+      var mv2=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g2H2),matFrame);mv2.position.set(m2x,f2base+F2*0.45,-m2z);mv2.rotation.y=faceAngle;g.add(mv2)}
+    // Balcony glass door + balcony slab + railings on floor 2 front edge
+    if(isFront){
+      var doorGlassW=e.len*0.3,doorGlassH=F2*0.9;var dgx=e.ax+0.6*e.dx+e.nx*(gOff+0.01),dgz=e.ay+0.6*e.dy+e.ny*(gOff+0.01);
       var dg=new THREE.Mesh(new THREE.PlaneGeometry(doorGlassW,doorGlassH),matGlassLit);dg.position.set(dgx,f2base+doorGlassH/2+0.05,-dgz);dg.rotation.y=faceAngle;g.add(dg);
       for(var di=-1;di<=1;di++){var dmx=e.ax+(0.6+di*doorGlassW*0.3/e.len)*e.dx+e.nx*(gOff+0.02),dmz=e.ay+(0.6+di*doorGlassW*0.3/e.len)*e.dy+e.ny*(gOff+0.02);var dm=new THREE.Mesh(new THREE.PlaneGeometry(0.04,doorGlassH),matFrame);dm.position.set(dmx,f2base+doorGlassH/2+0.05,-dmz);dm.rotation.y=faceAngle;g.add(dm)}
       var balcW2=doorGlassW+0.3,balcD2=0.35;var balcCx=e.ax+0.6*e.dx+balcD2*0.5*e.nx,balcCz=e.ay+0.6*e.dy+balcD2*0.5*e.ny;
@@ -1079,11 +1231,10 @@ function buildModernVilla(poly2D,height,color){
       for(var bri=0;bri<=4;bri++){var bt2=(bri/4-0.5)*balcW2;var bpx=bFx+bt2*e.ux,bpz=bFz+bt2*e.uy;var bp=new THREE.Mesh(new THREE.BoxGeometry(railTh,bRailH,railTh),matRailing);bp.position.set(bpx,f2base+bRailH/2,-bpz);g.add(bp)}
       var bTopR=new THREE.Mesh(new THREE.BoxGeometry(balcW2,railTh,railTh),matRailing);bTopR.position.set(bFx,f2base+bRailH,-bFz);bTopR.rotation.y=e.angle;g.add(bTopR);
       var bMidR=new THREE.Mesh(new THREE.BoxGeometry(balcW2,railTh,railTh),matRailing);bMidR.position.set(bFx,f2base+bRailH*0.5,-bFz);bMidR.rotation.y=e.angle;g.add(bMidR);
-      var doorH3=Math.min(2.4,F1*0.75);var doorX=e.ax+0.1*e.dx+e.nx*0.06,doorZ=e.ay+0.1*e.dy+e.ny*0.06;
-      var doorMesh=new THREE.Mesh(new THREE.PlaneGeometry(1.2,doorH3),matDoor);doorMesh.position.set(doorX,doorH3/2,-doorZ);doorMesh.rotation.y=faceAngle;g.add(doorMesh);
-      var dfx=e.ax+0.1*e.dx+e.nx*0.055,dfz=e.ay+0.1*e.dy+e.ny*0.055;var df1=new THREE.Mesh(new THREE.PlaneGeometry(1.35,0.08),matFrame);df1.position.set(dfx,doorH3+0.04,-dfz);df1.rotation.y=faceAngle;g.add(df1)}}
-  // Rooftop railings
-  for(ei=0;ei<n;ei++){var re=edges[ei];if(re.len<0.5)continue;var postCount=Math.max(2,Math.round(re.len/1.5));
+    }
+  }
+  // Rooftop railings — follow floor 2 polygon (includes cantilever extension)
+  for(var rei=0;rei<f2n;rei++){var re=f2edges[rei];if(re.len<0.5)continue;var postCount=Math.max(2,Math.round(re.len/1.5));
     for(var pi=0;pi<=postCount;pi++){var pt=pi/postCount;var rpx=re.ax+pt*re.dx,rpz=re.ay+pt*re.dy;var rpost=new THREE.Mesh(new THREE.BoxGeometry(railTh,railH,railTh),matRailing);rpost.position.set(rpx,roofYv+railH/2,-rpz);g.add(rpost)}
     var rmx=(re.ax+re.bx)/2,rmy=(re.ay+re.by)/2;var tR=new THREE.Mesh(new THREE.BoxGeometry(re.len,railTh,railTh),matRailing);tR.position.set(rmx,roofYv+railH,-rmy);tR.rotation.y=re.angle;g.add(tR);
     var mR=new THREE.Mesh(new THREE.BoxGeometry(re.len,railTh,railTh),matRailing);mR.position.set(rmx,roofYv+railH*0.5,-rmy);mR.rotation.y=re.angle;g.add(mR)}
@@ -1246,9 +1397,11 @@ function buildVillas3D(){
     for(let i=0;i<STATE.dynamicLots.length;i++){const l=STATE.dynamicLots[i];if(l&&l.length>=3)addLotOverlay3D(l,VILLA_COLORS[i])}
   }else{
     const dir=STATE.divDir;
-    if((dir==='optimum'||dir==='optimum2'||dir==='optimum3'||dir==='optimum4')&&STATE.pCommonRectAB&&STATE.pCommonRectAB.rects){
-      // Optimum 1-4: modern villas — A&B rectangles, C irregular polygon
-      for(let i=0;i<2;i++){const r=STATE.pCommonRectAB.rects[i];if(r&&r.length>=3){const house=buildModernVilla(r,h,VILLA_COLORS[i]);villaGroup.add(house)}}
+    if((dir==='optimum'||dir==='optimum2'||dir==='optimum3'||dir==='optimum4'||dir==='optimum6'||dir==='optimum7')&&STATE.pCommonRectAB&&STATE.pCommonRectAB.rects){
+      // Optimum 1-4, 6-7: modern villas — A&B rectangles, C irregular polygon
+      // Optimum 6/7 also applies 1.5m cantilever on rectangular A/B villas (road + garden sides)
+      const rectCantilever=(dir==='optimum6'||dir==='optimum7');
+      for(let i=0;i<2;i++){const r=STATE.pCommonRectAB.rects[i];if(r&&r.length>=3){const house=buildModernVilla(r,h,VILLA_COLORS[i],rectCantilever);villaGroup.add(house)}}
       if(STATE.pClipC&&STATE.pClipC.length>=3){const house=buildModernVilla(STATE.pClipC,h,VILLA_COLORS[2]);villaGroup.add(house)}
     }else if(dir==='optimum5'){
       // Optimum 5: modern villas — 3 rectangular villas
