@@ -12,6 +12,13 @@
   #bacaPicker button{padding:8px 12px;border:1.5px solid #E0DCD0;border-radius:5px;background:#FFF;color:#333;font-size:12px;cursor:pointer;text-align:left;transition:all 0.15s}
   #bacaPicker button:hover{background:#F5EEE0;border-color:#A08050}
   #bacaPicker button.active{background:#6B4226;border-color:#4A2E1A;color:#FFF}
+  #fencePicker{position:absolute;bottom:10px;left:10px;background:rgba(255,255,255,0.95);padding:10px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);display:flex;flex-direction:column;gap:4px;min-width:150px}
+  #fencePicker .fp-label{font-size:11px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-top:6px;margin-bottom:2px}
+  #fencePicker .fp-label:first-child{margin-top:0}
+  #fencePicker button{padding:6px 10px;border:1.5px solid #E0DCD0;border-radius:5px;background:#FFF;color:#333;font-size:12px;cursor:pointer;text-align:left;transition:all 0.15s}
+  #fencePicker button:hover{background:#EAEEF0;border-color:#5A7080}
+  #fencePicker .fw-btn.active{background:#8A8070;border-color:#5A554A;color:#FFF}
+  #fencePicker .fi-btn.active{background:#2A2A2A;border-color:#111;color:#FFF}
 </style>
 </head>
 <body>
@@ -24,6 +31,20 @@
   <button data-baca="stone">Taş Baca</button>
   <button data-baca="double">Çift Hazneli</button>
   <button data-baca="vent">Ventilasyon</button>
+</div>
+<div id="fencePicker">
+  <div class="fp-label">Çit Duvarı</div>
+  <button class="fw-btn active" data-w="beton">Beton</button>
+  <button class="fw-btn" data-w="tas">Taş</button>
+  <button class="fw-btn" data-w="beyaz">Beyaz Sıva</button>
+  <button class="fw-btn" data-w="tugla">Tuğla</button>
+  <button class="fw-btn" data-w="dogaltas">Doğal Taş</button>
+  <div class="fp-label">Demir Parmaklık</div>
+  <button class="fi-btn active" data-i="duz">Düz</button>
+  <button class="fi-btn" data-i="sivri">Sivri Uçlu</button>
+  <button class="fi-btn" data-i="yatay">Yatay Çubuk</button>
+  <button class="fi-btn" data-i="kare">Kare Ağ</button>
+  <button class="fi-btn" data-i="suslu">Süslü</button>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -863,6 +884,169 @@ document.querySelectorAll('#bacaPicker button').forEach(function(btn){
 // Lift the villa up by SUBASMAN so it sits on top of the plinth
 villa.position.y=SUBASMAN;
 scene.add(villa);
+
+// ==========================================
+// FENCE — outer land boundary (1m wall + 1m iron rods)
+// ==========================================
+const FENCE_W=26, FENCE_D=22;              // fence perimeter dimensions
+const WALL_H=1.0, IRON_H=1.0;               // 1m wall + 1m iron
+const WALL_THICK=0.18;
+const IRON_THICK=0.025;
+
+// Wall style materials
+function getWallMaterial(style){
+  if(style==='beton') return new THREE.MeshStandardMaterial({color:0xB8B4AC,roughness:0.9,metalness:0.02});
+  if(style==='tas'){
+    // Use a simple gray stone color with higher roughness
+    return new THREE.MeshStandardMaterial({color:0x8E8680,roughness:0.95,metalness:0.0});
+  }
+  if(style==='beyaz') return new THREE.MeshStandardMaterial({color:0xF0EAD8,roughness:0.8,metalness:0.02});
+  if(style==='tugla') return new THREE.MeshStandardMaterial({color:0x9A4A2C,roughness:0.85,metalness:0.02});
+  if(style==='dogaltas') return new THREE.MeshStandardMaterial({color:0xB89868,roughness:0.92,metalness:0.0});
+  return new THREE.MeshStandardMaterial({color:0xB8B4AC,roughness:0.9});
+}
+
+const matIron=new THREE.MeshStandardMaterial({color:0x1C1C1C,roughness:0.3,metalness:0.8});
+
+// Build iron rods for one fence segment, based on style
+function buildIronSegment(len,ironStyle,mat,container){
+  // The segment is centered at (0,0,0) in the container, with length along X
+  // Container gets positioned and rotated by caller
+  if(ironStyle==='duz' || ironStyle==='sivri' || ironStyle==='suslu'){
+    // Vertical bars
+    const spacing=0.12;
+    const nBars=Math.floor(len/spacing);
+    for(let i=0;i<nBars;i++){
+      const x=(i-(nBars-1)/2)*spacing;
+      const bar=new THREE.Mesh(
+        new THREE.BoxGeometry(IRON_THICK,IRON_H,IRON_THICK),mat);
+      bar.position.set(x,WALL_H+IRON_H/2,0);
+      bar.castShadow=true;
+      container.add(bar);
+      if(ironStyle==='sivri'){
+        // Add pointed cone top
+        const spike=new THREE.Mesh(
+          new THREE.ConeGeometry(IRON_THICK*1.5,0.12,6),mat);
+        spike.position.set(x,WALL_H+IRON_H+0.06,0);
+        container.add(spike);
+      }else if(ironStyle==='suslu' && i%3===0){
+        // Add decorative sphere every 3rd bar
+        const ball=new THREE.Mesh(
+          new THREE.SphereGeometry(IRON_THICK*2,8,6),mat);
+        ball.position.set(x,WALL_H+IRON_H+0.06,0);
+        container.add(ball);
+      }
+    }
+    // Top + bottom horizontal rails
+    const topRail=new THREE.Mesh(
+      new THREE.BoxGeometry(len,IRON_THICK*1.2,IRON_THICK*1.2),mat);
+    topRail.position.set(0,WALL_H+IRON_H-0.02,0);
+    container.add(topRail);
+    const botRail=new THREE.Mesh(
+      new THREE.BoxGeometry(len,IRON_THICK*1.2,IRON_THICK*1.2),mat);
+    botRail.position.set(0,WALL_H+0.05,0);
+    container.add(botRail);
+  }else if(ironStyle==='yatay'){
+    // Horizontal rails only (5 bars)
+    for(let i=0;i<5;i++){
+      const y=WALL_H+(i/4)*IRON_H*0.95+0.025;
+      const rail=new THREE.Mesh(
+        new THREE.BoxGeometry(len,IRON_THICK*1.4,IRON_THICK*1.4),mat);
+      rail.position.set(0,y,0);
+      rail.castShadow=true;
+      container.add(rail);
+    }
+    // End posts
+    for(let s=-1;s<=1;s+=2){
+      const post=new THREE.Mesh(
+        new THREE.BoxGeometry(IRON_THICK*1.8,IRON_H,IRON_THICK*1.8),mat);
+      post.position.set(s*len/2,WALL_H+IRON_H/2,0);
+      container.add(post);
+    }
+  }else if(ironStyle==='kare'){
+    // Square mesh: vertical every 20cm + horizontal at multiple heights
+    const vSpacing=0.22, hSpacing=0.22;
+    const nV=Math.floor(len/vSpacing);
+    for(let i=0;i<nV;i++){
+      const x=(i-(nV-1)/2)*vSpacing;
+      const bar=new THREE.Mesh(
+        new THREE.BoxGeometry(IRON_THICK*0.8,IRON_H,IRON_THICK*0.8),mat);
+      bar.position.set(x,WALL_H+IRON_H/2,0);
+      container.add(bar);
+    }
+    const nH=Math.floor(IRON_H/hSpacing)+1;
+    for(let i=0;i<nH;i++){
+      const y=WALL_H+i*hSpacing;
+      if(y>WALL_H+IRON_H)break;
+      const rail=new THREE.Mesh(
+        new THREE.BoxGeometry(len,IRON_THICK*0.8,IRON_THICK*0.8),mat);
+      rail.position.set(0,y,0);
+      container.add(rail);
+    }
+  }
+}
+
+// Fence main group + rebuild function
+const fenceGroup=new THREE.Group();
+scene.add(fenceGroup);
+
+function buildFence(wallStyle,ironStyle){
+  while(fenceGroup.children.length){
+    const c=fenceGroup.children[0];
+    fenceGroup.remove(c);
+    if(c.geometry)c.geometry.dispose();
+  }
+  const wallMat=getWallMaterial(wallStyle);
+  // 4 sides — each has a wall segment + iron segment
+  const sides=[
+    {len:FENCE_W, pos:[0, -FENCE_D/2], rotY:0},            // back
+    {len:FENCE_W, pos:[0, FENCE_D/2], rotY:0},             // front
+    {len:FENCE_D, pos:[-FENCE_W/2, 0], rotY:Math.PI/2},    // left
+    {len:FENCE_D, pos:[FENCE_W/2, 0], rotY:Math.PI/2}      // right
+  ];
+  for(const s of sides){
+    const segGroup=new THREE.Group();
+    segGroup.position.set(s.pos[0],0,s.pos[1]);
+    segGroup.rotation.y=s.rotY;
+    // Wall block
+    const wall=new THREE.Mesh(
+      new THREE.BoxGeometry(s.len,WALL_H,WALL_THICK),wallMat);
+    wall.position.set(0,WALL_H/2,0);
+    wall.castShadow=true;wall.receiveShadow=true;
+    segGroup.add(wall);
+    // Wall cap (slight overhang at top)
+    const cap=new THREE.Mesh(
+      new THREE.BoxGeometry(s.len+0.05,0.05,WALL_THICK+0.08),
+      new THREE.MeshStandardMaterial({color:0x555048,roughness:0.85}));
+    cap.position.set(0,WALL_H+0.025,0);
+    segGroup.add(cap);
+    // Iron rods
+    buildIronSegment(s.len,ironStyle,matIron,segGroup);
+    fenceGroup.add(segGroup);
+  }
+}
+
+// Default fence
+let fenceWallStyle='beton', fenceIronStyle='duz';
+buildFence(fenceWallStyle,fenceIronStyle);
+
+// UI wiring for fence
+document.querySelectorAll('#fencePicker .fw-btn').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    document.querySelectorAll('#fencePicker .fw-btn').forEach(b=>b.classList.remove('active'));
+    this.classList.add('active');
+    fenceWallStyle=this.dataset.w;
+    buildFence(fenceWallStyle,fenceIronStyle);
+  });
+});
+document.querySelectorAll('#fencePicker .fi-btn').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    document.querySelectorAll('#fencePicker .fi-btn').forEach(b=>b.classList.remove('active'));
+    this.classList.add('active');
+    fenceIronStyle=this.dataset.i;
+    buildFence(fenceWallStyle,fenceIronStyle);
+  });
+});
 
 // --- Animate ---
 function animate(){

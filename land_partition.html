@@ -312,6 +312,15 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         <button class="vs-btn" data-style="beyaztash" title="Beyaz"><div class="vs-swatch" style="background:#F0EAD6"></div>Beyaz</button>
         <button class="vs-btn" data-style="terracotta" title="Terracotta"><div class="vs-swatch" style="background:#C4785A"></div>Kiremit</button>
       </div>
+      <div class="vs-label" style="margin-top:6px">Çit Duvarı</div>
+      <div class="vs-grid" data-floor="fence">
+        <button class="vs-btn active" data-style="beton" title="Beton"><div class="vs-swatch" style="background:#B8B4AC"></div>Beton</button>
+        <button class="vs-btn" data-style="tas" title="Taş"><div class="vs-swatch" style="background:#8E8680"></div>Taş</button>
+        <button class="vs-btn" data-style="beyaz" title="Beyaz Sıva"><div class="vs-swatch" style="background:#F0EAD8"></div>Beyaz</button>
+        <button class="vs-btn" data-style="tugla" title="Tuğla"><div class="vs-swatch" style="background:#9A4A2C"></div>Tuğla</button>
+        <button class="vs-btn" data-style="dogaltas" title="Doğal Taş"><div class="vs-swatch" style="background:#B89868"></div>Doğal Taş</button>
+        <button class="vs-btn" data-style="koyu" title="Koyu"><div class="vs-swatch" style="background:#3A3634"></div>Koyu</button>
+      </div>
       <div class="vs-label" style="margin-top:6px">Seramik Yönü</div>
       <div class="vs-grid" data-floor="tileAlign" style="grid-template-columns:repeat(2,1fr)">
         <button class="vs-btn active" data-style="villa" title="Bina ile hizalı"><div class="vs-swatch" style="background:repeating-linear-gradient(0deg,#D8D0C8 0 8px,#4A4540 8px 9px),repeating-linear-gradient(90deg,#D8D0C8 0 8px,#4A4540 8px 9px)"></div>Düz</button>
@@ -873,7 +882,7 @@ document.getElementById('downloadBtn').addEventListener('click',function(){
 // ═══════════════════════════════════════
 // 3D
 // ═══════════════════════════════════════
-let threeInited=false,threeScene,threeCamera,threeRenderer,threeControls,threeSunLight,threeAnimId=null,villaGroup,objectGroup;
+let threeInited=false,threeScene,threeCamera,threeRenderer,threeControls,threeSunLight,threeAnimId=null,villaGroup,objectGroup,landFenceGroup;
 const VILLA_COLORS=[0xD85A30,0x185FA5,0x534AB7];
 
 document.querySelectorAll('#viewToggle .toggle-btn').forEach(b=>{b.addEventListener('click',function(){document.querySelectorAll('#viewToggle .toggle-btn').forEach(x=>x.classList.remove('active'));this.classList.add('active');STATE.view=this.dataset.view;const svg=document.getElementById('map'),cv=document.getElementById('threeCanvas'),sun=document.getElementById('sunSection'),pal=document.getElementById('objectPalette'),vsp=document.getElementById('villaStylePicker');if(STATE.view==='3d'){svg.style.display='none';cv.style.display='block';sun.style.display='';pal.classList.add('show');vsp.classList.add('show');if(!threeInited)initThreeScene(cv);buildVillas3D();updateSun3D();animateThree()}else{svg.style.display='';cv.style.display='none';sun.style.display='none';pal.classList.remove('show');vsp.classList.remove('show');if(threeAnimId){cancelAnimationFrame(threeAnimId);threeAnimId=null}renderFull()}})});
@@ -886,7 +895,7 @@ function initThreeScene(canvas){
   threeScene=new THREE.Scene();threeScene.background=new THREE.Color(0x87CEEB);
   threeRenderer=new THREE.WebGLRenderer({canvas,antialias:true});threeRenderer.setPixelRatio(window.devicePixelRatio);resizeThreeRenderer();threeRenderer.shadowMap.enabled=true;threeRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
   threeCamera=new THREE.PerspectiveCamera(50,canvas.clientWidth/canvas.clientHeight,.5,500);threeCamera.position.set(cx,45,-cy-40);threeCamera.lookAt(cx,0,-cy);
-  threeControls=new THREE.OrbitControls(threeCamera,canvas);threeControls.target.set(cx,0,-cy);threeControls.enableDamping=true;threeControls.dampingFactor=.08;threeControls.maxPolarAngle=Math.PI/2.1;threeControls.update();
+  threeControls=new THREE.OrbitControls(threeCamera,canvas);threeControls.target.set(cx,0,-cy);threeControls.enableDamping=true;threeControls.dampingFactor=.08;threeControls.maxPolarAngle=Math.PI/2-0.01;threeControls.update();
   threeScene.add(new THREE.AmbientLight(0x404040,.6));threeScene.add(new THREE.HemisphereLight(0x87CEEB,0x8BC34A,.3));
   threeSunLight=new THREE.DirectionalLight(0xffffff,1.2);threeSunLight.castShadow=true;threeSunLight.shadow.mapSize.set(2048,2048);threeSunLight.shadow.camera.left=-60;threeSunLight.shadow.camera.right=70;threeSunLight.shadow.camera.top=70;threeSunLight.shadow.camera.bottom=-60;threeSunLight.shadow.camera.near=1;threeSunLight.shadow.camera.far=200;threeSunLight.shadow.bias=-.001;threeScene.add(threeSunLight);threeScene.add(threeSunLight.target);threeSunLight.target.position.set(cx,0,-cy);
   // Ground
@@ -938,10 +947,10 @@ function initThreeScene(canvas){
   // Road
   const rPts=[P6,P5,P4,P3,P2],rs=new THREE.Shape();rs.moveTo(rPts[0][0],rPts[0][1]);for(let i=1;i<rPts.length;i++)rs.lineTo(rPts[i][0],rPts[i][1]);for(let i=rPts.length-1;i>=0;i--){const p=rPts[i],pr=rPts[Math.max(0,i-1)],nx=rPts[Math.min(rPts.length-1,i+1)],dx=nx[0]-pr[0],dy=nx[1]-pr[1],l=Math.hypot(dx,dy)||1;rs.lineTo(p[0]+(-dy/l)*3.5,p[1]+(dx/l)*3.5)}rs.closePath();
   const rm=new THREE.Mesh(new THREE.ShapeGeometry(rs),new THREE.MeshLambertMaterial({color:0x888888}));rm.rotation.x=-Math.PI/2;rm.position.y=.02;rm.receiveShadow=true;threeScene.add(rm);
-  // Fence
-  const fH=1.5,fM=new THREE.MeshPhongMaterial({color:0x8B6914});
-  for(let i=0;i<parcelM.length;i++){const a=parcelM[i],b=parcelM[(i+1)%parcelM.length];const post=new THREE.Mesh(new THREE.BoxGeometry(.15,fH,.15),fM);post.position.set(a[0],fH/2,-a[1]);post.castShadow=true;threeScene.add(post);const dx=b[0]-a[0],dz=-(b[1]-a[1]),l=Math.hypot(dx,dz);const rail=new THREE.Mesh(new THREE.BoxGeometry(l,.08,.06),fM);rail.position.set((a[0]+b[0])/2,fH*.7,-(a[1]+b[1])/2);rail.rotation.y=-Math.atan2(dz,dx);rail.castShadow=true;threeScene.add(rail);const r2=rail.clone();r2.position.y=fH*.35;threeScene.add(r2)}
+  // Land boundary fence (1m wall + 1m iron) — populated via buildLandFence
+  landFenceGroup=new THREE.Group();threeScene.add(landFenceGroup);
   villaGroup=new THREE.Group();threeScene.add(villaGroup);objectGroup=new THREE.Group();threeScene.add(objectGroup);threeInited=true;
+  buildLandFence(STATE.fenceWallStyle||'beton');
 }
 function resizeThreeRenderer(){if(!threeRenderer)return;const vp=document.getElementById('viewport');const w=vp.clientWidth,h=vp.clientHeight;threeRenderer.setSize(w,h);if(threeCamera){threeCamera.aspect=w/h;threeCamera.updateProjectionMatrix()}}
 window.addEventListener('resize',()=>{if(threeInited&&STATE.view==='3d')resizeThreeRenderer()});
@@ -1431,16 +1440,17 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
   var fv=poly2D[accVertexIdx];
   var accX, accZ;
   if(accUseCantilever){
-    // Push toward P4 (into the cantilever area — safe for a decorative box on the supported roof slab)
+    // Push toward P4 a bit (into the cantilever zone) — keep it near the corner but inside the roof
     var dxP4a=P4[0]-fv[0], dyP4a=P4[1]-fv[1];
     var lP4a=Math.hypot(dxP4a,dyP4a);
-    accX=fv[0]+dxP4a/lP4a*1.3;
-    accZ=fv[1]+dyP4a/lP4a*1.3;
+    accX=fv[0]+dxP4a/lP4a*0.6;
+    accZ=fv[1]+dyP4a/lP4a*0.6;
   }else{
     var toCx=cent[0]-fv[0],toCy=cent[1]-fv[1];var tcLen=Math.hypot(toCx,toCy);
     accX=fv[0]+toCx/tcLen*1.5;accZ=fv[1]+toCy/tcLen*1.5;
   }
-  var accW2=1.8,accH2=Math.min(1.8,F2*0.55),accD2=1.2;
+  // Slightly smaller footprint for the corner placement so it doesn't overhang the roof edge
+  var accW2=accUseCantilever?1.5:1.8, accH2=Math.min(1.8,F2*0.55), accD2=accUseCantilever?0.9:1.2;
   var accBox=new THREE.Mesh(new THREE.BoxGeometry(accW2,accH2,accD2),matWood);accBox.position.set(accX,roofYv+accH2/2,-accZ);accBox.rotation.y=Math.atan2(dirY,dirX);accBox.castShadow=true;g.add(accBox);
 
   // === VENT BACA (tall ventilation chimney — ALWAYS above a non-cantilever wall) ===
@@ -1504,7 +1514,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
       g.add(vRaf);
     }
     // 2 wooden support columns at far end corners — extend down to ground (past subasman)
-    var SUBASMAN_H=1.0;
+    var SUBASMAN_H=0.8;
     for(var vcs=-1;vcs<=1;vcs+=2){
       var vColCx=vmx+ge.nx*VER_DEPTH+vcs*(VER_W/2)*ge.ux;
       var vColCy=vmy+ge.ny*VER_DEPTH+vcs*(VER_W/2)*ge.uy;
@@ -1527,11 +1537,11 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
 
   // === SUBASMAN (plinth) + ENTRANCE STEPS ===
   // 1m raised base, color matches roof terrace style. Shift the whole group up by SUBASMAN at the end.
-  var SUB_H=1.0;
+  var SUB_H=0.8;
   // Subasman slab: extrude the same villa footprint, from local Y=-SUB_H to Y=0
   mvPolySlab(poly2D,-SUB_H,SUB_H,matRoofSlab);
   // Entrance steps: 6 steps, ~16.7cm rise, 30cm tread, 2m wide, in front of the door (longIdx edge, t=0.1)
-  var STEPS_N=6, STEP_RISE=SUB_H/STEPS_N, STEP_TREAD=0.30, STAIR_W=2.0;
+  var STEPS_N=5, STEP_RISE=SUB_H/STEPS_N, STEP_TREAD=0.30, STAIR_W=2.0;
   var stDoorEdge=edges[longIdx], stDoorT=doorT;
   var stDoorCx=stDoorEdge.ax+stDoorT*stDoorEdge.dx;
   var stDoorCy=stDoorEdge.ay+stDoorT*stDoorEdge.dy;
@@ -1681,6 +1691,73 @@ function wandererStep(obj){
 
 function createObj(type,x,z){let o;switch(type){case'cypress':o=createCypress();break;case'deciduous':o=createDeciduous();break;case'pool':o=createPool();break;case'fence':o=createFenceObj();break;case'pathway':o=createPathway();break;case'human':o=createHuman();break;case'dog':o=createDog();break;case'chicken':o=createChicken();break;default:o=createDeciduous()}o.position.set(x,0,z);return o}
 function createFenceObj(){const g=new THREE.Group();const mat=new THREE.MeshPhongMaterial({color:0x8B6914});for(let i=0;i<4;i++)g.add(_m(new THREE.BoxGeometry(.1,1.2,.1),mat,i*1.2,.6,0,1));g.add(_m(new THREE.BoxGeometry(3.6,.06,.05),mat,1.8,.9,0,1));g.add(_m(new THREE.BoxGeometry(3.6,.06,.05),mat,1.8,.4,0,1));return g}
+
+// Fence wall style definitions — matches the wall style picker in the UI
+const FENCE_WALL_STYLES={
+  beton:{color:0xB8B4AC,roughness:0.9,metalness:0.02},
+  tas:{color:0x8E8680,roughness:0.95,metalness:0.0},
+  beyaz:{color:0xF0EAD8,roughness:0.8,metalness:0.02},
+  tugla:{color:0x9A4A2C,roughness:0.85,metalness:0.02},
+  dogaltas:{color:0xB89868,roughness:0.92,metalness:0.0},
+  koyu:{color:0x3A3634,roughness:0.85,metalness:0.05}
+};
+function buildLandFence(wallStyle){
+  if(!landFenceGroup)return;
+  while(landFenceGroup.children.length){var c=landFenceGroup.children[0];landFenceGroup.remove(c);if(c.geometry)c.geometry.dispose()}
+  var cfg=FENCE_WALL_STYLES[wallStyle]||FENCE_WALL_STYLES.beton;
+  var WALL_H=1.0, IRON_H=1.0;
+  var WALL_THICK=0.18, IRON_THICK=0.025;
+  var wallMat=new THREE.MeshStandardMaterial({color:cfg.color,roughness:cfg.roughness,metalness:cfg.metalness});
+  var capMat=new THREE.MeshStandardMaterial({color:0x555048,roughness:0.85});
+  var ironMat=new THREE.MeshStandardMaterial({color:0x1C1C1C,roughness:0.3,metalness:0.8});
+  // For each edge of the land parcel, build wall + iron rods
+  for(var fi=0;fi<parcelM.length;fi++){
+    var a=parcelM[fi], b=parcelM[(fi+1)%parcelM.length];
+    var dx=b[0]-a[0], dy=b[1]-a[1];
+    var len=Math.hypot(dx,dy);
+    if(len<0.1)continue;
+    var mxP=(a[0]+b[0])/2, myP=(a[1]+b[1])/2;
+    var angle=Math.atan2(dy,dx);
+    // Wall block
+    var wall=new THREE.Mesh(new THREE.BoxGeometry(len,WALL_H,WALL_THICK),wallMat);
+    wall.position.set(mxP,WALL_H/2,-myP);
+    wall.rotation.y=angle;
+    wall.castShadow=true;wall.receiveShadow=true;
+    landFenceGroup.add(wall);
+    // Wall cap (small overhang)
+    var cap=new THREE.Mesh(new THREE.BoxGeometry(len+0.05,0.05,WALL_THICK+0.08),capMat);
+    cap.position.set(mxP,WALL_H+0.025,-myP);
+    cap.rotation.y=angle;
+    landFenceGroup.add(cap);
+    // Iron vertical bars with a GENTLE point on top (not sharp — legal)
+    var spacing=0.12;
+    var nBars=Math.floor(len/spacing);
+    var ux=dx/len, uy=dy/len;
+    for(var bi=0;bi<nBars;bi++){
+      var t=(bi-(nBars-1)/2)*spacing;
+      var bx=mxP+ux*t, by=myP+uy*t;
+      var bar=new THREE.Mesh(new THREE.BoxGeometry(IRON_THICK,IRON_H,IRON_THICK),ironMat);
+      bar.position.set(bx,WALL_H+IRON_H/2,-by);
+      bar.rotation.y=angle;
+      bar.castShadow=true;
+      landFenceGroup.add(bar);
+      // Gentle pointed tip — short, wide cone (not legal-sharp)
+      var tip=new THREE.Mesh(new THREE.ConeGeometry(IRON_THICK*1.6,0.05,6),ironMat);
+      tip.position.set(bx,WALL_H+IRON_H+0.025,-by);
+      tip.rotation.y=angle;
+      landFenceGroup.add(tip);
+    }
+    // Top + bottom horizontal rails
+    var topRail=new THREE.Mesh(new THREE.BoxGeometry(len,IRON_THICK*1.2,IRON_THICK*1.2),ironMat);
+    topRail.position.set(mxP,WALL_H+IRON_H-0.02,-myP);
+    topRail.rotation.y=angle;
+    landFenceGroup.add(topRail);
+    var botRail=new THREE.Mesh(new THREE.BoxGeometry(len,IRON_THICK*1.2,IRON_THICK*1.2),ironMat);
+    botRail.position.set(mxP,WALL_H+0.05,-myP);
+    botRail.rotation.y=angle;
+    landFenceGroup.add(botRail);
+  }
+}
 
 function addLotOverlay3D(poly,color){
   const sh=new THREE.Shape();sh.moveTo(poly[0][0],poly[0][1]);for(let j=1;j<poly.length;j++)sh.lineTo(poly[j][0],poly[j][1]);sh.closePath();
@@ -2141,6 +2218,7 @@ STATE.villaStyleF1='modern';
 STATE.villaStyleF2='modern';
 STATE.villaStyleRoof='beton';
 STATE.tileAlignment='villa'; // 'villa' = aligned with building walls; 'world' = world-axis (angled)
+STATE.fenceWallStyle='beton'; // outer land boundary fence wall color
 
 // Roof terrace surface styles
 const ROOF_STYLES={
@@ -2162,6 +2240,7 @@ document.querySelectorAll('#villaStylePicker .vs-grid').forEach(function(grid){
       else if(floor==='f2')STATE.villaStyleF2=this.dataset.style;
       else if(floor==='roof')STATE.villaStyleRoof=this.dataset.style;
       else if(floor==='tileAlign')STATE.tileAlignment=this.dataset.style;
+      else if(floor==='fence'){STATE.fenceWallStyle=this.dataset.style;if(STATE.view==='3d'&&threeInited)buildLandFence(STATE.fenceWallStyle);return}
       if(STATE.view==='3d'&&threeInited)buildVillas3D();
     });
   });
