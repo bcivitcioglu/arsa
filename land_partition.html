@@ -1063,10 +1063,11 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
   // === CANTILEVER: floor 2 extends 1.5m outward (pentagon: road+garden edges; rectangle+flag: 2 short edges) ===
   var f2poly=poly2D, f2edges=edges, f2n=n, f2longIdx=longIdx, f2cent=cent, hasCantilever=false;
   var gardenEdgeIdx=-1; // index of the "garden side" edge (used for veranda)
+  var isRoad=[]; // true for cantilever edges (populated by cantilever blocks below)
   if(n===4 && rectCantilever){
     var CANT_D=1.5;
     // Identify the 2 short edges (road + garden sides — perpendicular to road direction)
-    var isRoad=[false,false,false,false];
+    isRoad=[false,false,false,false];
     if(edges[0].len<edges[1].len){isRoad[0]=true;isRoad[2]=true}
     else{isRoad[1]=true;isRoad[3]=true}
     // Garden edge = the short cantilever edge with HIGHEST projection along sweep (farther from road)
@@ -1125,7 +1126,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
   }
   else if(n>=5 && typeof buildM!=='undefined' && buildM && buildM.length>=3){
     var CANT_D=1.5, TOL_ROAD=1.2;
-    var isRoad=[];
+    isRoad=[];
     for(var iR=0;iR<n;iR++){
       var eR=edges[iR], mxR=(eR.ax+eR.bx)/2, myR=(eR.ay+eR.by)/2;
       var minD=Infinity;
@@ -1206,25 +1207,114 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
   mvPolySlab(f2poly,F1,SLAB2,matConcreteSlab);
   mvExtrudePoly(f2poly,f2base,F2,matConcreteF2);
   mvPolySlab(f2poly,f2base+F2,SLAB2,matRoofSlab);
+  // Rooftop ceramic tile surface — 60x60cm tiles, tinted with the selected roof style color
+  (function addRooftopTiles(){
+    var sh=new THREE.Shape();
+    sh.moveTo(f2poly[0][0],f2poly[0][1]);
+    for(var si=1;si<f2poly.length;si++)sh.lineTo(f2poly[si][0],f2poly[si][1]);
+    sh.closePath();
+    var tileGeo=new THREE.ShapeGeometry(sh);
+    tileGeo.rotateX(-Math.PI/2);
+    // After rotateX(-π/2): shape's 2D Y becomes -Z in 3D, shape's 2D X stays X.
+    // Override UVs to use world (x, -z) coords so each 60cm = 1 tile regardless of polygon size.
+    var posAttr=tileGeo.getAttribute('position');
+    var uvArr=[];
+    for(var pi=0;pi<posAttr.count;pi++){
+      uvArr.push(posAttr.getX(pi), -posAttr.getZ(pi));
+    }
+    tileGeo.setAttribute('uv',new THREE.Float32BufferAttribute(uvArr,2));
+    // Clone texture per villa so we can set its own repeat (2.4m span per repeat for 4 tiles × 60cm)
+    var tileTex=makeCeramicTileTexture().clone();
+    tileTex.needsUpdate=true;
+    tileTex.wrapS=tileTex.wrapT=THREE.RepeatWrapping;
+    tileTex.repeat.set(1/2.4, 1/2.4);
+    var tileMat=new THREE.MeshStandardMaterial({
+      map:tileTex,
+      color:roofCfg.color,          // roof style selector tints the tiles
+      roughness:Math.max(0.3,(roofCfg.roughness||0.6)*0.55),
+      metalness:(roofCfg.metalness||0.05)+0.03
+    });
+    var tileMesh=new THREE.Mesh(tileGeo,tileMat);
+    tileMesh.position.y=f2base+F2+SLAB2+0.003; // sit just above the roof slab
+    tileMesh.receiveShadow=true;
+    g.add(tileMesh);
+  })();
+
+  // Determine door placement on front edge — shifted toward garden (but not at the corner)
+  // Default: garden at t=1 side (higher t) → door at t=0.65, big window left, small window right
+  var doorT=0.65, bigT=0.3, smallT=0.85;
+  if(gardenEdgeIdx>=0){
+    var prevLongE=(longIdx-1+n)%n, nextLongE=(longIdx+1)%n;
+    if(prevLongE===gardenEdgeIdx){
+      // Garden edge adjacent at t=0 side → mirror: door toward t=0
+      doorT=0.35; bigT=0.7; smallT=0.15;
+    }
+  }
 
   // Floor 1 facade: glass, mullions, front door (uses poly2D edges)
   for(ei=0;ei<n;ei++){var e=edges[ei];if(e.len<2)continue;var faceAngle=Math.atan2(e.nx,-e.ny);var isFront=(ei===longIdx);
-    var glassW=e.len*0.55,g1H2=F1*0.75,gMat=isFront?matGlassLit:matGlass,gOff=0.06;
-    // Floor 1 glass
-    var gcx=e.ax+0.5*e.dx+e.nx*gOff,gcz=e.ay+0.5*e.dy+e.ny*gOff;
-    var gm1=new THREE.Mesh(new THREE.PlaneGeometry(glassW,g1H2),gMat);gm1.position.set(gcx,F1*0.43,-gcz);gm1.rotation.y=faceAngle;g.add(gm1);
-    // Floor 1 mullions
-    var mullionCount=Math.max(2,Math.round(glassW/2));
-    for(var mi2=0;mi2<mullionCount;mi2++){var mt=(mi2+1)/(mullionCount+1);var mmx=e.ax+(0.5-glassW/e.len*0.5+mt*glassW/e.len)*e.dx+e.nx*(gOff+0.01);var mmz=e.ay+(0.5-glassW/e.len*0.5+mt*glassW/e.len)*e.dy+e.ny*(gOff+0.01);
-      var mv1=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);mv1.position.set(mmx,F1*0.43,-mmz);mv1.rotation.y=faceAngle;g.add(mv1)}
-    // Horizontal mullion on floor 1
-    var hmx=e.ax+0.5*e.dx+e.nx*(gOff+0.01),hmz=e.ay+0.5*e.dy+e.ny*(gOff+0.01);
-    var hm1=new THREE.Mesh(new THREE.PlaneGeometry(glassW,0.05),matFrame);hm1.position.set(hmx,F1*0.6,-hmz);hm1.rotation.y=faceAngle;g.add(hm1);
-    // Front door on floor 1 front edge
+    var g1H2=F1*0.75,gMat=isFront?matGlassLit:matGlass,gOff=0.06;
+
     if(isFront){
-      var doorH3=Math.min(2.4,F1*0.75);var doorX=e.ax+0.1*e.dx+e.nx*0.06,doorZ=e.ay+0.1*e.dy+e.ny*0.06;
-      var doorMesh=new THREE.Mesh(new THREE.PlaneGeometry(1.2,doorH3),matDoor);doorMesh.position.set(doorX,doorH3/2,-doorZ);doorMesh.rotation.y=faceAngle;g.add(doorMesh);
-      var dfx=e.ax+0.1*e.dx+e.nx*0.055,dfz=e.ay+0.1*e.dy+e.ny*0.055;var df1=new THREE.Mesh(new THREE.PlaneGeometry(1.35,0.08),matFrame);df1.position.set(dfx,doorH3+0.04,-dfz);df1.rotation.y=faceAngle;g.add(df1);
+      // === FRONT EDGE: bigger window + door (shifted toward garden) + smaller window ===
+      // Bigger window (existing look)
+      var bigW=e.len*0.5;
+      var bgx=e.ax+bigT*e.dx+e.nx*gOff, bgz=e.ay+bigT*e.dy+e.ny*gOff;
+      var bigGlass=new THREE.Mesh(new THREE.PlaneGeometry(bigW,g1H2),gMat);
+      bigGlass.position.set(bgx,F1*0.43,-bgz);bigGlass.rotation.y=faceAngle;g.add(bigGlass);
+      // Bigger window vertical mullions
+      var bigMC=Math.max(2,Math.round(bigW/2));
+      for(var bmi=0;bmi<bigMC;bmi++){
+        var bmt=(bmi+1)/(bigMC+1);
+        var bmtx=bigT-bigW/e.len*0.5+bmt*bigW/e.len;
+        var bmmx=e.ax+bmtx*e.dx+e.nx*(gOff+0.01);
+        var bmmz=e.ay+bmtx*e.dy+e.ny*(gOff+0.01);
+        var bmv=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);
+        bmv.position.set(bmmx,F1*0.43,-bmmz);bmv.rotation.y=faceAngle;g.add(bmv);
+      }
+      // Bigger window horizontal mullion
+      var bhx=e.ax+bigT*e.dx+e.nx*(gOff+0.01), bhz=e.ay+bigT*e.dy+e.ny*(gOff+0.01);
+      var bhm=new THREE.Mesh(new THREE.PlaneGeometry(bigW,0.05),matFrame);
+      bhm.position.set(bhx,F1*0.6,-bhz);bhm.rotation.y=faceAngle;g.add(bhm);
+
+      // NEW smaller window on the other side of the door (toward garden)
+      var smallW=e.len*0.2;
+      var sgx=e.ax+smallT*e.dx+e.nx*gOff, sgz=e.ay+smallT*e.dy+e.ny*gOff;
+      var smallGlass=new THREE.Mesh(new THREE.PlaneGeometry(smallW,g1H2),gMat);
+      smallGlass.position.set(sgx,F1*0.43,-sgz);smallGlass.rotation.y=faceAngle;g.add(smallGlass);
+      // Smaller window vertical mullion (1)
+      var smv=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);
+      var smvX=e.ax+smallT*e.dx+e.nx*(gOff+0.01), smvZ=e.ay+smallT*e.dy+e.ny*(gOff+0.01);
+      smv.position.set(smvX,F1*0.43,-smvZ);smv.rotation.y=faceAngle;g.add(smv);
+      // Smaller window horizontal mullion
+      var shm=new THREE.Mesh(new THREE.PlaneGeometry(smallW,0.05),matFrame);
+      shm.position.set(smvX,F1*0.6,-smvZ);shm.rotation.y=faceAngle;g.add(shm);
+
+      // Front door — at doorT (toward middle, closer to garden), not at the corner
+      var doorH3=Math.min(2.4,F1*0.75);
+      var doorX=e.ax+doorT*e.dx+e.nx*0.06, doorZ=e.ay+doorT*e.dy+e.ny*0.06;
+      var doorMesh=new THREE.Mesh(new THREE.PlaneGeometry(1.2,doorH3),matDoor);
+      doorMesh.position.set(doorX,doorH3/2,-doorZ);doorMesh.rotation.y=faceAngle;g.add(doorMesh);
+      var dfx=e.ax+doorT*e.dx+e.nx*0.055, dfz=e.ay+doorT*e.dy+e.ny*0.055;
+      var df1=new THREE.Mesh(new THREE.PlaneGeometry(1.35,0.08),matFrame);
+      df1.position.set(dfx,doorH3+0.04,-dfz);df1.rotation.y=faceAngle;g.add(df1);
+    }else{
+      // === NON-FRONT EDGES: single centered window (existing behavior) ===
+      var glassW=e.len*0.55;
+      var gcx=e.ax+0.5*e.dx+e.nx*gOff,gcz=e.ay+0.5*e.dy+e.ny*gOff;
+      var gm1=new THREE.Mesh(new THREE.PlaneGeometry(glassW,g1H2),gMat);
+      gm1.position.set(gcx,F1*0.43,-gcz);gm1.rotation.y=faceAngle;g.add(gm1);
+      var mullionCount=Math.max(2,Math.round(glassW/2));
+      for(var mi2=0;mi2<mullionCount;mi2++){
+        var mt=(mi2+1)/(mullionCount+1);
+        var mmx=e.ax+(0.5-glassW/e.len*0.5+mt*glassW/e.len)*e.dx+e.nx*(gOff+0.01);
+        var mmz=e.ay+(0.5-glassW/e.len*0.5+mt*glassW/e.len)*e.dy+e.ny*(gOff+0.01);
+        var mv1=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);
+        mv1.position.set(mmx,F1*0.43,-mmz);mv1.rotation.y=faceAngle;g.add(mv1);
+      }
+      var hmx=e.ax+0.5*e.dx+e.nx*(gOff+0.01),hmz=e.ay+0.5*e.dy+e.ny*(gOff+0.01);
+      var hm1=new THREE.Mesh(new THREE.PlaneGeometry(glassW,0.05),matFrame);
+      hm1.position.set(hmx,F1*0.6,-hmz);hm1.rotation.y=faceAngle;g.add(hm1);
     }
   }
 
@@ -1263,12 +1353,104 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
   [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(function(pr){var ppx=cent[0]+pr[0]*(pergSz/2-0.1)*dirX+pr[1]*(pergSz/2-0.1)*perpX;var ppz=cent[1]+pr[0]*(pergSz/2-0.1)*dirY+pr[1]*(pergSz/2-0.1)*perpY;var pm=new THREE.Mesh(new THREE.BoxGeometry(0.14,pergH3,0.14),matWoodDark);pm.position.set(ppx,roofYv+pergH3/2,-ppz);g.add(pm)});
   for(var psi=0;psi<7;psi++){var pst=(psi/6-0.5)*pergSz;var psx=cent[0]+pst*perpX,psz=cent[1]+pst*perpY;var psm=new THREE.Mesh(new THREE.BoxGeometry(pergSz+0.1,0.08,0.06),matWoodDark);psm.position.set(psx,roofYv+pergH3,-psz);psm.rotation.y=Math.atan2(dirY,dirX);g.add(psm)}
   for(var pbi=-1;pbi<=1;pbi+=2){var pbx=cent[0]+pbi*(pergSz*0.42)*dirX,pbz=cent[1]+pbi*(pergSz*0.42)*dirY;var pb=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.12,pergSz+0.1),matWoodDark);pb.position.set(pbx,roofYv+pergH3-0.06,-pbz);pb.rotation.y=Math.atan2(dirY,dirX);g.add(pb)}
-  // Accent box
-  var farIdx=0,farDist=0;for(var fi=0;fi<n;fi++){var fd=Math.hypot(poly2D[fi][0]-cent[0],poly2D[fi][1]-cent[1]);if(fd>farDist){farDist=fd;farIdx=fi}}
-  var fv=poly2D[farIdx];var toCx=cent[0]-fv[0],toCy=cent[1]-fv[1];var tcLen=Math.hypot(toCx,toCy);
-  var accX=fv[0]+toCx/tcLen*1.5,accZ=fv[1]+toCy/tcLen*1.5;
+  // === VENT BACA vertex selection ===
+  // IMPORTANT: baca needs continuous vertical support to the ground, so it MUST sit above a
+  // non-cantilever wall (not the cantilever overhang). For the pentagon, pick the non-cantilever
+  // edge and use its endpoint closer to the road-facing walls.
+  var bacaVertexIdx=0;
+  if(n>=5 && isRoad.length===n){
+    // Pentagon: find the non-cantilever edge (structurally grounded)
+    var ncEdgeIdx=-1;
+    for(var nci=0;nci<n;nci++) if(!isRoad[nci]){ncEdgeIdx=nci;break}
+    if(ncEdgeIdx>=0){
+      // Pick the endpoint of the non-cantilever edge that is adjacent to a ROAD cantilever edge
+      // (not the garden cantilever) — this is the "closest to the road" end
+      var prevEdgeIdx=(ncEdgeIdx-1+n)%n;
+      var nextEdgeIdx=(ncEdgeIdx+1)%n;
+      var startIsRoadAdj=isRoad[prevEdgeIdx] && prevEdgeIdx!==gardenEdgeIdx;
+      var endIsRoadAdj=isRoad[nextEdgeIdx] && nextEdgeIdx!==gardenEdgeIdx;
+      if(startIsRoadAdj) bacaVertexIdx=ncEdgeIdx;
+      else if(endIsRoadAdj) bacaVertexIdx=(ncEdgeIdx+1)%n;
+      else bacaVertexIdx=ncEdgeIdx;
+    }
+  }else if(gardenEdgeIdx>=0){
+    var gE=edges[gardenEdgeIdx];
+    var gMx=(gE.ax+gE.bx)/2, gMy=(gE.ay+gE.by)/2;
+    var maxD=-1;
+    for(var bvi=0;bvi<n;bvi++){
+      var d=Math.hypot(poly2D[bvi][0]-gMx,poly2D[bvi][1]-gMy);
+      if(d>maxD){maxD=d;bacaVertexIdx=bvi}
+    }
+  }else{
+    var minP=Infinity;
+    for(var bvi2=0;bvi2<n;bvi2++){
+      var pr=poly2D[bvi2][0]*pRoadNx+poly2D[bvi2][1]*pRoadNy;
+      if(pr<minP){minP=pr;bacaVertexIdx=bvi2}
+    }
+  }
+
+  // === ACCENT BOX (AC unit / storage) ===
+  // - Rectangle (n===4): opposite short-edge corner from the baca (no overlap)
+  // - Pentagon: vertex closest to P4, pushed 1.3m toward P4 (over the cantilever — decorative, OK)
+  var accVertexIdx;
+  var accUseCantilever=false;
+  if(n===4){
+    var adjNext=(bacaVertexIdx+1)%4, adjPrev=(bacaVertexIdx+3)%4;
+    var eToNext=edges[bacaVertexIdx], eToPrev=edges[adjPrev];
+    accVertexIdx=(eToNext.len<eToPrev.len)?adjNext:adjPrev;
+  }else if(n>=5 && typeof P4!=='undefined' && P4 && P4.length===2){
+    var minDP4=Infinity;
+    for(var avi=0;avi<n;avi++){
+      var dP4a=Math.hypot(poly2D[avi][0]-P4[0],poly2D[avi][1]-P4[1]);
+      if(dP4a<minDP4){minDP4=dP4a;accVertexIdx=avi}
+    }
+    accUseCantilever=true;
+  }else{
+    var farIdx=0,farDist=0;
+    for(var fi=0;fi<n;fi++){
+      var fd=Math.hypot(poly2D[fi][0]-cent[0],poly2D[fi][1]-cent[1]);
+      if(fd>farDist){farDist=fd;farIdx=fi}
+    }
+    accVertexIdx=farIdx;
+  }
+  var fv=poly2D[accVertexIdx];
+  var accX, accZ;
+  if(accUseCantilever){
+    // Push toward P4 (into the cantilever area — safe for a decorative box on the supported roof slab)
+    var dxP4a=P4[0]-fv[0], dyP4a=P4[1]-fv[1];
+    var lP4a=Math.hypot(dxP4a,dyP4a);
+    accX=fv[0]+dxP4a/lP4a*1.3;
+    accZ=fv[1]+dyP4a/lP4a*1.3;
+  }else{
+    var toCx=cent[0]-fv[0],toCy=cent[1]-fv[1];var tcLen=Math.hypot(toCx,toCy);
+    accX=fv[0]+toCx/tcLen*1.5;accZ=fv[1]+toCy/tcLen*1.5;
+  }
   var accW2=1.8,accH2=Math.min(1.8,F2*0.55),accD2=1.2;
   var accBox=new THREE.Mesh(new THREE.BoxGeometry(accW2,accH2,accD2),matWood);accBox.position.set(accX,roofYv+accH2/2,-accZ);accBox.rotation.y=Math.atan2(dirY,dirX);accBox.castShadow=true;g.add(accBox);
+
+  // === VENT BACA (tall ventilation chimney — ALWAYS above a non-cantilever wall) ===
+  var bacaR=0.22, bacaH=2.3;
+  var bacaCapR=bacaR+0.15;
+  var bacaV=poly2D[bacaVertexIdx];
+  // Inset toward centroid keeps the baca inside poly2D (ground-supported area)
+  var bInsetX=cent[0]-bacaV[0], bInsetY=cent[1]-bacaV[1];
+  var bInsetLen=Math.hypot(bInsetX,bInsetY);
+  var bacaInset=0.7;
+  var bacaX=bacaV[0]+bInsetX/bInsetLen*bacaInset;
+  var bacaZw=bacaV[1]+bInsetY/bInsetLen*bacaInset;
+  var matVent=new THREE.MeshStandardMaterial({color:0x333333,roughness:0.4,metalness:0.7});
+  var bacaBase=new THREE.Mesh(new THREE.CylinderGeometry(bacaR,bacaR,bacaH,20),matVent);
+  bacaBase.position.set(bacaX,roofYv+bacaH/2,-bacaZw);
+  bacaBase.castShadow=true;
+  g.add(bacaBase);
+  var bacaCap=new THREE.Mesh(new THREE.CylinderGeometry(bacaCapR,bacaR,0.15,20),matVent);
+  bacaCap.position.set(bacaX,roofYv+bacaH+0.075,-bacaZw);
+  bacaCap.castShadow=true;
+  g.add(bacaCap);
+  var bacaTop=new THREE.Mesh(new THREE.CylinderGeometry(bacaCapR+0.05,bacaCapR+0.05,0.04,20),matVent);
+  bacaTop.position.set(bacaX,roofYv+bacaH+0.17,-bacaZw);
+  bacaTop.castShadow=true;
+  g.add(bacaTop);
 
   // === VERANDA: 4m wooden shade extension from garden-side edge (opt 6/7 only) ===
   if(addVeranda && gardenEdgeIdx>=0){
@@ -1335,7 +1517,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
   mvPolySlab(poly2D,-SUB_H,SUB_H,matRoofSlab);
   // Entrance steps: 6 steps, ~16.7cm rise, 30cm tread, 2m wide, in front of the door (longIdx edge, t=0.1)
   var STEPS_N=6, STEP_RISE=SUB_H/STEPS_N, STEP_TREAD=0.30, STAIR_W=2.0;
-  var stDoorEdge=edges[longIdx], stDoorT=0.1;
+  var stDoorEdge=edges[longIdx], stDoorT=doorT;
   var stDoorCx=stDoorEdge.ax+stDoorT*stDoorEdge.dx;
   var stDoorCy=stDoorEdge.ay+stDoorT*stDoorEdge.dy;
   var stEdgeAngle=stDoorEdge.angle;
@@ -1721,6 +1903,49 @@ setTimeout(()=>{
   initThreeScene(document.getElementById('threeCanvas'));
   buildVillas3D();updateSun3D();animateThree();
 },100);
+
+// Procedural 60x60cm ceramic tile texture for rooftop floors
+let _ceramicTileTexCache=null;
+function makeCeramicTileTexture(){
+  if(_ceramicTileTexCache)return _ceramicTileTexCache;
+  const c=document.createElement('canvas');
+  c.width=c.height=512;
+  const ctx=c.getContext('2d');
+  // Near-white tile palette with subtle variation (tinted via material.color)
+  ctx.fillStyle='#5A524A'; // grout background (dark warm gray)
+  ctx.fillRect(0,0,512,512);
+  const palette=['#E0DAD2','#E4DED6','#DCD6CE','#E2DCD4','#E6E0D8','#DAD4CC','#DED8D0','#E3DDD5','#DDD7CF','#E1DBD3'];
+  const tilesPerSide=4; // 4x4 tiles in texture → one texture covers 2.4m (4 × 60cm)
+  const tileSize=512/tilesPerSide; // 128 px
+  const groutW=3;
+  for(let ty=0;ty<tilesPerSide;ty++){
+    for(let tx=0;tx<tilesPerSide;tx++){
+      const color=palette[Math.floor(Math.random()*palette.length)];
+      ctx.fillStyle=color;
+      const x=tx*tileSize+groutW/2;
+      const y=ty*tileSize+groutW/2;
+      const w=tileSize-groutW;
+      ctx.fillRect(x,y,w,w);
+      ctx.fillStyle='rgba(255,255,255,0.08)';
+      ctx.fillRect(x,y,w,1);ctx.fillRect(x,y,1,w);
+      ctx.fillStyle='rgba(0,0,0,0.14)';
+      ctx.fillRect(x,y+w-1,w,1);ctx.fillRect(x+w-1,y,1,w);
+    }
+  }
+  // Overall noise
+  const img=ctx.getImageData(0,0,512,512);
+  for(let i=0;i<img.data.length;i+=4){
+    const n=(Math.random()-0.5)*10;
+    img.data[i]=Math.max(0,Math.min(255,img.data[i]+n));
+    img.data[i+1]=Math.max(0,Math.min(255,img.data[i+1]+n));
+    img.data[i+2]=Math.max(0,Math.min(255,img.data[i+2]+n));
+  }
+  ctx.putImageData(img,0,0);
+  const tex=new THREE.CanvasTexture(c);
+  tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+  _ceramicTileTexCache=tex;
+  return tex;
+}
 
 // Procedural irregular gray fieldstone texture (Anatolian drystone)
 let _grayStoneTexCache=null;

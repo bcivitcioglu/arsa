@@ -7,10 +7,24 @@
   body{margin:0;overflow:hidden;background:#1a1a2e;font-family:sans-serif}
   canvas{display:block}
   #info{position:absolute;top:10px;left:10px;color:#fff;background:rgba(0,0,0,0.6);padding:10px 16px;border-radius:8px;font-size:13px}
+  #bacaPicker{position:absolute;top:10px;right:10px;background:rgba(255,255,255,0.95);padding:10px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);display:flex;flex-direction:column;gap:4px;min-width:150px}
+  #bacaPicker .bp-label{font-size:11px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px}
+  #bacaPicker button{padding:8px 12px;border:1.5px solid #E0DCD0;border-radius:5px;background:#FFF;color:#333;font-size:12px;cursor:pointer;text-align:left;transition:all 0.15s}
+  #bacaPicker button:hover{background:#F5EEE0;border-color:#A08050}
+  #bacaPicker button.active{background:#6B4226;border-color:#4A2E1A;color:#FFF}
 </style>
 </head>
 <body>
 <div id="info">Modern Villa Prototype — drag to orbit, scroll to zoom</div>
+<div id="bacaPicker">
+  <div class="bp-label">Baca Tipi</div>
+  <button data-baca="none">Yok</button>
+  <button class="active" data-baca="brick">Klasik Tuğla</button>
+  <button data-baca="modern">Modern Metal</button>
+  <button data-baca="stone">Taş Baca</button>
+  <button data-baca="double">Çift Hazneli</button>
+  <button data-baca="vent">Ventilasyon</button>
+</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 THREE.OrbitControls=function(cam,el){
@@ -404,6 +418,55 @@ const matGlassLit=new THREE.MeshPhysicalMaterial({
   clearcoat:0.3,clearcoatRoughness:0.15,
   side:THREE.DoubleSide
 });
+// Procedural 60x60cm ceramic tile texture for the rooftop floor
+function makeCeramicTileTexture(){
+  const c=document.createElement('canvas');
+  c.width=c.height=512;
+  const ctx=c.getContext('2d');
+  // Grout color background
+  ctx.fillStyle='#4A4540';
+  ctx.fillRect(0,0,512,512);
+  // Light warm-gray ceramic tile palette (subtle variations)
+  const palette=['#ACA69E','#B0AAA2','#A8A29A','#AEA8A0','#B2ACA4','#A6A098','#AAA4A0','#ACA69A','#B0AAA4','#A8A2A0'];
+  const tilesPerSide=4; // 4x4 tiles in texture → each texture covers 2.4m (4 × 60cm)
+  const tileSize=512/tilesPerSide; // 128 px
+  const groutW=3;
+  for(let ty=0;ty<tilesPerSide;ty++){
+    for(let tx=0;tx<tilesPerSide;tx++){
+      const color=palette[Math.floor(Math.random()*palette.length)];
+      ctx.fillStyle=color;
+      const x=tx*tileSize+groutW/2;
+      const y=ty*tileSize+groutW/2;
+      const w=tileSize-groutW;
+      ctx.fillRect(x,y,w,w);
+      // Subtle highlight on top & left (glossy ceramic feel)
+      ctx.fillStyle='rgba(255,255,255,0.07)';
+      ctx.fillRect(x,y,w,1);
+      ctx.fillRect(x,y,1,w);
+      // Subtle shadow on bottom & right
+      ctx.fillStyle='rgba(0,0,0,0.14)';
+      ctx.fillRect(x,y+w-1,w,1);
+      ctx.fillRect(x+w-1,y,1,w);
+    }
+  }
+  // Overall noise for realism
+  const img=ctx.getImageData(0,0,512,512);
+  for(let i=0;i<img.data.length;i+=4){
+    const n=(Math.random()-0.5)*10;
+    img.data[i]=Math.max(0,Math.min(255,img.data[i]+n));
+    img.data[i+1]=Math.max(0,Math.min(255,img.data[i+1]+n));
+    img.data[i+2]=Math.max(0,Math.min(255,img.data[i+2]+n));
+  }
+  ctx.putImageData(img,0,0);
+  const tex=new THREE.CanvasTexture(c);
+  tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+  return tex;
+}
+const matCeramicTile=new THREE.MeshStandardMaterial({
+  map:makeCeramicTileTexture(),
+  roughness:0.35,metalness:0.05
+});
+
 const matRailing=new THREE.MeshStandardMaterial({color:0x222222,roughness:0.25,metalness:0.85});
 const matFrame=new THREE.MeshStandardMaterial({color:0x1A1A1A,roughness:0.3,metalness:0.75});
 const matDoor=new THREE.MeshStandardMaterial({color:0x6B4226,roughness:0.55,metalness:0.0});
@@ -449,6 +512,27 @@ villa.add(box(W,F2,F2_D, 0,f2base+F2/2,F2_offZ, matConcrete));
 
 // Floor 2 roof slab
 villa.add(box(W+0.3,SLAB,F2_D+0.5, 0,f2base+F2+SLAB/2,F2_offZ, matConcreteSlab));
+
+// === CERAMIC TILE FLOOR (60x60cm tiles) on the rooftop terrace ===
+const tileW=W+0.3, tileD=F2_D+0.5;
+// Clone the tile material so we can set its own repeat for this surface
+const rooftopTileTex=matCeramicTile.map.clone();
+rooftopTileTex.wrapS=rooftopTileTex.wrapT=THREE.RepeatWrapping;
+rooftopTileTex.needsUpdate=true;
+// One texture = 4 tiles × 60cm = 2.4m span. Repeat to fit rooftop size.
+rooftopTileTex.repeat.set(tileW/2.4, tileD/2.4);
+const matRooftopTile=new THREE.MeshStandardMaterial({
+  map:rooftopTileTex,
+  roughness:0.35,metalness:0.05
+});
+const rooftopTile=new THREE.Mesh(
+  new THREE.PlaneGeometry(tileW,tileD),
+  matRooftopTile
+);
+rooftopTile.rotation.x=-Math.PI/2;
+rooftopTile.position.set(0, f2base+F2+SLAB+0.003, F2_offZ);
+rooftopTile.receiveShadow=true;
+villa.add(rooftopTile);
 
 // Rooftop accent box (wood-clad utility room) — tucked into corner
 const accW=W*0.14,accH=1.8,accD=F2_D*0.28;
@@ -652,6 +736,129 @@ for(let s=0;s<STEPS;s++){
   step.castShadow=true;step.receiveShadow=true;
   scene.add(step);
 }
+
+// ==========================================
+// BACA (chimney) options
+// ==========================================
+// Materials
+const matBrick=new THREE.MeshStandardMaterial({color:0x9A4A2C,roughness:0.9,metalness:0.02});
+const matBrickCap=new THREE.MeshStandardMaterial({color:0x5A3A2A,roughness:0.85,metalness:0.05});
+const matMetalBaca=new THREE.MeshStandardMaterial({color:0x2A2A2A,roughness:0.25,metalness:0.85});
+const matStoneBaca=new THREE.MeshStandardMaterial({color:0x8A8880,roughness:0.92,metalness:0.02});
+const matVentCap=new THREE.MeshStandardMaterial({color:0x333333,roughness:0.4,metalness:0.7});
+
+// Base position on roof (back-right area, offset from pergola and accent)
+const bacaX=W*0.15, bacaZ=F2_offZ-F2_D*0.3;
+const bacaBaseY=f2base+F2+SLAB; // top of roof slab
+
+function buildNoneBaca(){return new THREE.Group()}
+
+function buildBrickBaca(){
+  const g=new THREE.Group();
+  const bw=0.55, bh=1.6;
+  // Main stack
+  g.add(_mb(new THREE.BoxGeometry(bw,bh,bw),matBrick, bacaX,bacaBaseY+bh/2,bacaZ));
+  // Cap (wider concrete/brick cap at top)
+  g.add(_mb(new THREE.BoxGeometry(bw+0.18,0.12,bw+0.18),matBrickCap, bacaX,bacaBaseY+bh+0.06,bacaZ));
+  // Smaller cap
+  g.add(_mb(new THREE.BoxGeometry(bw+0.08,0.06,bw+0.08),matBrickCap, bacaX,bacaBaseY+bh+0.15,bacaZ));
+  // Flue openings (dark squares on top)
+  g.add(_mb(new THREE.BoxGeometry(bw*0.5,0.04,bw*0.5),matMetalBaca, bacaX,bacaBaseY+bh+0.19,bacaZ));
+  return g;
+}
+
+function buildModernBaca(){
+  const g=new THREE.Group();
+  const r=0.18, h=2.2;
+  // Cylinder pipe
+  const pipe=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,16),matMetalBaca);
+  pipe.position.set(bacaX,bacaBaseY+h/2,bacaZ);
+  pipe.castShadow=true;
+  g.add(pipe);
+  // Cap (small disc + cone)
+  const cap=new THREE.Mesh(new THREE.CylinderGeometry(r+0.08,r+0.08,0.05,16),matMetalBaca);
+  cap.position.set(bacaX,bacaBaseY+h+0.025,bacaZ);
+  g.add(cap);
+  const cone=new THREE.Mesh(new THREE.ConeGeometry(r+0.1,0.12,16),matMetalBaca);
+  cone.position.set(bacaX,bacaBaseY+h+0.11,bacaZ);
+  g.add(cone);
+  return g;
+}
+
+function buildStoneBaca(){
+  const g=new THREE.Group();
+  const bw=0.7, bh=1.5;
+  // Main stone stack (wider than brick)
+  g.add(_mb(new THREE.BoxGeometry(bw,bh,bw),matStoneBaca, bacaX,bacaBaseY+bh/2,bacaZ));
+  // Stepped stone cap
+  g.add(_mb(new THREE.BoxGeometry(bw+0.2,0.08,bw+0.2),matStoneBaca, bacaX,bacaBaseY+bh+0.04,bacaZ));
+  g.add(_mb(new THREE.BoxGeometry(bw+0.12,0.1,bw+0.12),matStoneBaca, bacaX,bacaBaseY+bh+0.13,bacaZ));
+  // Dark flue top
+  g.add(_mb(new THREE.BoxGeometry(bw*0.4,0.06,bw*0.4),matMetalBaca, bacaX,bacaBaseY+bh+0.18,bacaZ));
+  return g;
+}
+
+function buildDoubleBaca(){
+  const g=new THREE.Group();
+  const bw=0.45, bh=1.5, gap=0.5;
+  // Two stacks side by side (along X)
+  g.add(_mb(new THREE.BoxGeometry(bw,bh,bw),matBrick, bacaX-gap/2,bacaBaseY+bh/2,bacaZ));
+  g.add(_mb(new THREE.BoxGeometry(bw,bh,bw),matBrick, bacaX+gap/2,bacaBaseY+bh/2,bacaZ));
+  // Shared cap covering both
+  g.add(_mb(new THREE.BoxGeometry(gap+bw+0.2,0.1,bw+0.18),matBrickCap, bacaX,bacaBaseY+bh+0.05,bacaZ));
+  g.add(_mb(new THREE.BoxGeometry(gap+bw+0.1,0.06,bw+0.1),matBrickCap, bacaX,bacaBaseY+bh+0.13,bacaZ));
+  // Two flue openings
+  g.add(_mb(new THREE.BoxGeometry(bw*0.5,0.04,bw*0.5),matMetalBaca, bacaX-gap/2,bacaBaseY+bh+0.17,bacaZ));
+  g.add(_mb(new THREE.BoxGeometry(bw*0.5,0.04,bw*0.5),matMetalBaca, bacaX+gap/2,bacaBaseY+bh+0.17,bacaZ));
+  return g;
+}
+
+function buildVentBaca(){
+  const g=new THREE.Group();
+  const r=0.25, h=0.8;
+  // Short wide cylinder base
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,20),matMetalBaca);
+  base.position.set(bacaX,bacaBaseY+h/2,bacaZ);
+  base.castShadow=true;
+  g.add(base);
+  // Mushroom cap (flared)
+  const capR=r+0.18;
+  const cap=new THREE.Mesh(new THREE.CylinderGeometry(capR,r,0.15,20),matVentCap);
+  cap.position.set(bacaX,bacaBaseY+h+0.075,bacaZ);
+  g.add(cap);
+  // Top disk
+  const top=new THREE.Mesh(new THREE.CylinderGeometry(capR+0.05,capR+0.05,0.04,20),matVentCap);
+  top.position.set(bacaX,bacaBaseY+h+0.17,bacaZ);
+  g.add(top);
+  return g;
+}
+
+// Helper: quick mesh creation
+function _mb(geo,mat,x,y,z){const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;return m}
+
+// Build all baca variants and add to villa
+const bacaGroups={
+  none:buildNoneBaca(),
+  brick:buildBrickBaca(),
+  modern:buildModernBaca(),
+  stone:buildStoneBaca(),
+  double:buildDoubleBaca(),
+  vent:buildVentBaca()
+};
+Object.values(bacaGroups).forEach(g=>{villa.add(g);g.visible=false});
+function setBaca(name){
+  Object.keys(bacaGroups).forEach(k=>{bacaGroups[k].visible=(k===name)});
+}
+setBaca('brick'); // default
+
+// UI wiring
+document.querySelectorAll('#bacaPicker button').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    document.querySelectorAll('#bacaPicker button').forEach(b=>b.classList.remove('active'));
+    this.classList.add('active');
+    setBaca(this.dataset.baca);
+  });
+});
 
 // Lift the villa up by SUBASMAN so it sits on top of the plinth
 villa.position.y=SUBASMAN;
