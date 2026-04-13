@@ -312,6 +312,11 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         <button class="vs-btn" data-style="beyaztash" title="Beyaz"><div class="vs-swatch" style="background:#F0EAD6"></div>Beyaz</button>
         <button class="vs-btn" data-style="terracotta" title="Terracotta"><div class="vs-swatch" style="background:#C4785A"></div>Kiremit</button>
       </div>
+      <div class="vs-label" style="margin-top:6px">Seramik Yönü</div>
+      <div class="vs-grid" data-floor="tileAlign" style="grid-template-columns:repeat(2,1fr)">
+        <button class="vs-btn active" data-style="villa" title="Bina ile hizalı"><div class="vs-swatch" style="background:repeating-linear-gradient(0deg,#D8D0C8 0 8px,#4A4540 8px 9px),repeating-linear-gradient(90deg,#D8D0C8 0 8px,#4A4540 8px 9px)"></div>Düz</button>
+        <button class="vs-btn" data-style="world" title="Açılı (dünya eksenli)"><div class="vs-swatch" style="background:repeating-linear-gradient(30deg,#D8D0C8 0 8px,#4A4540 8px 9px)"></div>Açılı</button>
+      </div>
       <div class="vs-label" style="margin-top:8px">2. Kat</div>
       <div class="vs-grid" data-floor="f2">
         <button class="vs-btn active" data-style="modern" title="Modern"><div class="vs-swatch" style="background:linear-gradient(135deg,#EAE2DA 50%,#B07840 50%)"></div>Modern</button>
@@ -1215,12 +1220,22 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
     sh.closePath();
     var tileGeo=new THREE.ShapeGeometry(sh);
     tileGeo.rotateX(-Math.PI/2);
-    // After rotateX(-π/2): shape's 2D Y becomes -Z in 3D, shape's 2D X stays X.
-    // Override UVs to use world (x, -z) coords so each 60cm = 1 tile regardless of polygon size.
+    // Override UVs: either world-aligned (angled on rotated villas) or villa-aligned (tiles parallel to walls)
     var posAttr=tileGeo.getAttribute('position');
     var uvArr=[];
+    var alignVilla=(STATE.tileAlignment==='villa');
     for(var pi=0;pi<posAttr.count;pi++){
-      uvArr.push(posAttr.getX(pi), -posAttr.getZ(pi));
+      var wx=posAttr.getX(pi);
+      var wy=-posAttr.getZ(pi); // polygon-space y (world Z is negated)
+      if(alignVilla){
+        // Project into OBB-local axes (dirX/dirY along longest edge, perpX/perpY perpendicular)
+        var u=(wx-cent[0])*dirX+(wy-cent[1])*dirY;
+        var v=(wx-cent[0])*perpX+(wy-cent[1])*perpY;
+        uvArr.push(u,v);
+      }else{
+        // World-axis (gives the angled look on rotated villas)
+        uvArr.push(wx,wy);
+      }
     }
     tileGeo.setAttribute('uv',new THREE.Float32BufferAttribute(uvArr,2));
     // Clone texture per villa so we can set its own repeat (2.4m span per repeat for 4 tiles × 60cm)
@@ -2125,6 +2140,7 @@ STATE.villaStyle='modern'; // kept for back-compat
 STATE.villaStyleF1='modern';
 STATE.villaStyleF2='modern';
 STATE.villaStyleRoof='beton';
+STATE.tileAlignment='villa'; // 'villa' = aligned with building walls; 'world' = world-axis (angled)
 
 // Roof terrace surface styles
 const ROOF_STYLES={
@@ -2145,6 +2161,7 @@ document.querySelectorAll('#villaStylePicker .vs-grid').forEach(function(grid){
       if(floor==='f1')STATE.villaStyleF1=this.dataset.style;
       else if(floor==='f2')STATE.villaStyleF2=this.dataset.style;
       else if(floor==='roof')STATE.villaStyleRoof=this.dataset.style;
+      else if(floor==='tileAlign')STATE.tileAlignment=this.dataset.style;
       if(STATE.view==='3d'&&threeInited)buildVillas3D();
     });
   });
