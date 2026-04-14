@@ -33,10 +33,16 @@ THREE.OrbitControls=function(cam,el){
     sph.setFromVector3(off);sph.theta+=sphD.theta;sph.phi+=sphD.phi;
     sph.phi=Math.max(0.01,Math.min(self.maxPolarAngle,sph.phi));
     sph.radius*=sc;sph.radius=Math.max(self.minDistance,Math.min(self.maxDistance,sph.radius));
-    self.target.add(panOff);off.setFromSpherical(sph).applyQuaternion(qI);
+    self.target.add(panOff);
+    // Clamp orbit target above ground so two-finger pan can't bury the camera
+    if(self.target.y<0)self.target.y=0;
+    off.setFromSpherical(sph).applyQuaternion(qI);
     cam.position.copy(self.target).add(off);cam.lookAt(self.target);
-    if(self.enableDamping){sphD.theta*=(1-self.dampingFactor);sphD.phi*=(1-self.dampingFactor);panOff.multiplyScalar(1-self.dampingFactor)}
-    else{sphD.set(0,0,0);panOff.set(0,0,0)}
+    // Rotation always direct (no momentum) — apply delta then reset
+    sphD.theta=0;sphD.phi=0;
+    // Pan can keep momentum if damping enabled
+    if(self.enableDamping){panOff.multiplyScalar(1-self.dampingFactor)}
+    else{panOff.set(0,0,0)}
     sc=1;
   };
   function doPan(dx,dy){
@@ -69,9 +75,9 @@ THREE.OrbitControls=function(cam,el){
         doPan(dx,dy);
       }else{
         var spd=(prev.type==='touch')?self.rotateSpeedTouch:self.rotateSpeedMouse;
-        // Assignment (not accumulation) so sphD reflects current motion only — prevents runaway spin
-        sphD.theta=-2*Math.PI*dx/el.clientHeight*spd;
-        sphD.phi=-2*Math.PI*dy/el.clientHeight*spd;
+        // Accumulate within a frame (sphD is reset each frame after applying — see update)
+        sphD.theta-=2*Math.PI*dx/el.clientHeight*spd;
+        sphD.phi-=2*Math.PI*dy/el.clientHeight*spd;
       }
     }else if(pointers.size===2){
       // Two pointers — pinch zoom + two-finger pan (dampened for touch comfort)
@@ -98,6 +104,7 @@ THREE.OrbitControls=function(cam,el){
     pointers.delete(e.pointerId);
     try{el.releasePointerCapture(e.pointerId)}catch(_){}
     if(pointers.size<2){lastPinchDist=0;lastPanMid=null}
+    if(pointers.size===0){panOff.set(0,0,0);sc=1} // immediate stop on full release — no drifting momentum
   }
   el.addEventListener('pointerup',endPointer);
   el.addEventListener('pointercancel',endPointer);
@@ -339,16 +346,16 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
   <!-- Top bar — replaces sidebar -->
   <div id="topBar">
     <select id="designSelect" class="tb-select" aria-label="Tasarım seçimi">
-      <option value="serbest">Serbest Tasarım</option>
-      <option value="optimum">Optimum 1 — 80m²</option>
-      <option value="optimum2">Optimum 2 — 80m²</option>
-      <option value="optimum3">Optimum 3 — 70m²</option>
-      <option value="optimum4">Optimum 4 — 70m²</option>
-      <option value="optimum5">Optimum 5 — Y-Radyal</option>
-      <option value="optimum6">Optimum 6 — 80m² + Çıkma</option>
-      <option value="optimum7">Optimum 7 — 70m² + Çıkma</option>
-      <option value="optimum8">Optimum 8 — 80m² + Çıkma + Veranda</option>
-      <option value="optimum9" selected>Optimum 9 — 70m² + Çıkma + Veranda</option>
+      <option value="optimum9" selected>Plan A — 70m² + Çıkma + Veranda</option>
+      <option value="optimum5">Plan B — Y-Radyal</option>
+      <option value="optimum8">Plan C — 80m² + Çıkma + Veranda</option>
+      <option value="optimum7">Plan D — 70m² + Çıkma</option>
+      <option value="optimum6">Plan E — 80m² + Çıkma</option>
+      <option value="optimum3">Plan F — 70m²</option>
+      <option value="optimum4">Plan F′ — 70m² (Aynalı)</option>
+      <option value="optimum">Plan G — 80m²</option>
+      <option value="optimum2">Plan G′ — 80m² (Aynalı)</option>
+      <option value="serbest">Serbest</option>
     </select>
     <div class="tb-sun" id="topSun">
       <span class="tb-sun-icon" aria-hidden="true">☀</span>
@@ -366,7 +373,6 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         <button data-view="2d">2D</button>
         <button data-view="3d" class="active">3D</button>
       </div>
-      <button class="tb-iconbtn" id="topFsBtn" title="Tam Ekran" aria-label="Tam Ekran">⛶</button>
     </div>
   </div>
   <aside id="sidebar">
@@ -2498,12 +2504,6 @@ document.querySelectorAll('#villaStylePicker .vs-grid').forEach(function(grid){
       var oldBtn=document.querySelector('#viewToggle .toggle-btn[data-view="'+v+'"]');
       if(oldBtn)oldBtn.click();
     });
-  });
-
-  // Fullscreen
-  document.getElementById('topFsBtn').addEventListener('click',function(){
-    var oldFs=document.getElementById('fsBtn');
-    if(oldFs)oldFs.click();
   });
 
   // Collapsible panels — click panel header to fold/unfold its body
