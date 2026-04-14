@@ -12,13 +12,19 @@ THREE.OrbitControls=function(cam,el){
   self.camera=cam;self.domElement=el;self.target=new THREE.Vector3();
   self.enableDamping=false;self.dampingFactor=0.05;self.maxPolarAngle=Math.PI;
   self.minDistance=1;self.maxDistance=500;
+  // Sensitivity factors: mouse vs touch (touch is much less sensitive to avoid accidental spins)
+  self.rotateSpeedMouse=1.0;
+  self.rotateSpeedTouch=0.35;
+  self.zoomSpeed=0.05;
   var sph=new THREE.Spherical(),sphD=new THREE.Spherical();
   var sc=1,panOff=new THREE.Vector3();
-  var rS=new THREE.Vector2(),rE=new THREE.Vector2(),rD=new THREE.Vector2();
-  var pS=new THREE.Vector2(),pE=new THREE.Vector2(),pD=new THREE.Vector2();
-  var st=0;var off=new THREE.Vector3();
+  var off=new THREE.Vector3();
   var q=new THREE.Quaternion().setFromUnitVectors(cam.up,new THREE.Vector3(0,1,0));
   var qI=q.clone().invert();
+  // Multi-pointer state (tracks fingers/mouse)
+  var pointers=new Map(); // pointerId -> {x,y,type,button}
+  var lastPinchDist=0;
+  var lastPanMid=null; // for two-finger pan
   self.update=function(){
     if(!self.enabled)return;
     off.copy(cam.position).sub(self.target).applyQuaternion(q);
@@ -37,10 +43,61 @@ THREE.OrbitControls=function(cam,el){
     v.setFromMatrixColumn(cam.matrix,0);v.multiplyScalar(-dx/el.clientHeight*tD);panOff.add(v);
     v.setFromMatrixColumn(cam.matrix,1);v.multiplyScalar(dy/el.clientHeight*tD);panOff.add(v);
   }
-  el.addEventListener('pointerdown',function(e){if(!self.enabled)return;if(e.button===0){st=1;rS.set(e.clientX,e.clientY)}else if(e.button===2){st=2;pS.set(e.clientX,e.clientY)}el.setPointerCapture(e.pointerId)});
-  el.addEventListener('pointermove',function(e){if(!self.enabled)return;if(st===1){rE.set(e.clientX,e.clientY);rD.subVectors(rE,rS);sphD.theta-=2*Math.PI*rD.x/el.clientHeight;sphD.phi-=2*Math.PI*rD.y/el.clientHeight;rS.copy(rE)}else if(st===2){pE.set(e.clientX,e.clientY);pD.subVectors(pE,pS);doPan(pD.x,pD.y);pS.copy(pE)}});
-  el.addEventListener('pointerup',function(e){st=0;el.releasePointerCapture(e.pointerId)});
-  el.addEventListener('wheel',function(e){if(!self.enabled)return;e.preventDefault();sc*=e.deltaY>0?1.05:0.95},{passive:false});
+  el.addEventListener('pointerdown',function(e){
+    if(!self.enabled)return;
+    pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,type:e.pointerType,button:e.button});
+    el.setPointerCapture(e.pointerId);
+    if(pointers.size===2){
+      var pts=Array.from(pointers.values());
+      lastPinchDist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+      lastPanMid={x:(pts[0].x+pts[1].x)/2,y:(pts[0].y+pts[1].y)/2};
+      // Reset accumulated rotation when entering pinch
+      sphD.theta=0;sphD.phi=0;
+    }
+  });
+  el.addEventListener('pointermove',function(e){
+    if(!self.enabled)return;
+    if(!pointers.has(e.pointerId))return;
+    var prev=pointers.get(e.pointerId);
+    var dx=e.clientX-prev.x, dy=e.clientY-prev.y;
+    pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,type:e.pointerType,button:prev.button});
+    if(pointers.size===1){
+      // Single pointer — rotate (or pan with right mouse button)
+      if(prev.button===2){
+        doPan(dx,dy);
+      }else{
+        var spd=(prev.type==='touch')?self.rotateSpeedTouch:self.rotateSpeedMouse;
+        // Assignment (not accumulation) so sphD reflects current motion only — prevents runaway spin
+        sphD.theta=-2*Math.PI*dx/el.clientHeight*spd;
+        sphD.phi=-2*Math.PI*dy/el.clientHeight*spd;
+      }
+    }else if(pointers.size===2){
+      // Two pointers — pinch zoom + two-finger pan
+      var pts=Array.from(pointers.values());
+      var dist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+      if(lastPinchDist>0){
+        sc*=lastPinchDist/dist; // pinch in (smaller dist) => zoom out (larger sc)
+      }
+      lastPinchDist=dist;
+      // Two-finger pan based on midpoint movement
+      var mx=(pts[0].x+pts[1].x)/2, my=(pts[0].y+pts[1].y)/2;
+      if(lastPanMid){
+        doPan(mx-lastPanMid.x, my-lastPanMid.y);
+      }
+      lastPanMid={x:mx,y:my};
+      // Suppress single-finger rotation while pinching
+      sphD.theta=0;sphD.phi=0;
+    }
+  });
+  function endPointer(e){
+    pointers.delete(e.pointerId);
+    try{el.releasePointerCapture(e.pointerId)}catch(_){}
+    if(pointers.size<2){lastPinchDist=0;lastPanMid=null}
+  }
+  el.addEventListener('pointerup',endPointer);
+  el.addEventListener('pointercancel',endPointer);
+  el.addEventListener('pointerleave',endPointer);
+  el.addEventListener('wheel',function(e){if(!self.enabled)return;e.preventDefault();sc*=e.deltaY>0?(1+self.zoomSpeed):(1-self.zoomSpeed)},{passive:false});
   el.addEventListener('contextmenu',function(e){e.preventDefault()});
 };
 </script>
@@ -118,9 +175,60 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 .dim-toggle{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);cursor:pointer;margin-top:6px}
 .dim-toggle input{accent-color:var(--accent);width:14px;height:14px}
 
-/* ─── Viewport (positioned above) ─── */
-#viewport{overflow:hidden;background:var(--bg)}
+/* ─── Hide the legacy sidebar — controls moved into top bar ─── */
+#sidebar,#sidebarToggle,#statusBar{display:none!important}
+
+/* ─── Top bar (replaces sidebar) ─── */
+#topBar{
+  position:absolute;top:0;left:0;right:0;height:60px;
+  display:flex;align-items:center;gap:10px;
+  padding:0 14px;
+  background:rgba(255,255,255,0.97);
+  border-bottom:1px solid var(--border);
+  box-shadow:0 2px 8px rgba(0,0,0,.06);
+  z-index:30;
+  font-size:14px;
+}
+.tb-select{
+  appearance:none;
+  padding:10px 32px 10px 14px;
+  border:1.5px solid var(--border);
+  border-radius:8px;
+  background:#FFF;
+  font-family:inherit;font-size:14px;font-weight:600;
+  color:var(--text);
+  cursor:pointer;
+  min-width:240px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M0 0l6 8 6-8z' fill='%237A7A72'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;
+}
+.tb-select:focus,.tb-select:hover{border-color:var(--accent);outline:none}
+.tb-sun{display:flex;align-items:center;gap:10px;flex:1;max-width:520px;background:#F5F4EF;border-radius:8px;padding:6px 12px}
+.tb-sun-icon{font-size:18px;color:#E69500}
+.tb-sun input[type="range"]{flex:1;accent-color:var(--accent);height:24px;cursor:pointer}
+#topTimeDisplay{font-family:'DM Mono',monospace;font-size:14px;font-weight:700;color:var(--text);min-width:48px;text-align:right}
+.tb-month{appearance:none;padding:6px 24px 6px 10px;border:1px solid var(--border);border-radius:6px;background:#FFF;font-family:inherit;font-size:13px;font-weight:600;color:var(--text);cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237A7A72'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 6px center}
+.tb-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.tb-toggle{display:flex;border:1.5px solid var(--border);border-radius:8px;overflow:hidden}
+.tb-toggle button{padding:9px 16px;border:none;background:#FFF;font-family:inherit;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;transition:all .12s;min-width:50px}
+.tb-toggle button.active{background:var(--accent);color:#FFF}
+.tb-iconbtn{
+  width:42px;height:42px;
+  border:1.5px solid var(--border);border-radius:8px;background:#FFF;color:var(--text);
+  font-size:18px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .12s;
+}
+.tb-iconbtn:hover{border-color:var(--accent);background:var(--accent-light);color:var(--accent)}
+.tb-iconbtn.active{background:var(--accent);border-color:var(--accent);color:#FFF}
+
+/* ─── Viewport (full area below top bar) ─── */
+#viewport{overflow:hidden;background:var(--bg);top:60px!important;left:0!important;right:0!important;bottom:0!important}
 #viewport svg,#viewport canvas{position:absolute;inset:0;width:100%;height:100%}
+#threeCanvas{touch-action:none}
+
+/* Hide old top controls (replaced by top bar) */
+#topControls{display:none!important}
 svg text{font-family:'DM Sans',sans-serif;user-select:none}
 .villa-body{cursor:grab}.villa-body:active{cursor:grabbing}
 .rotate-handle{cursor:grab;transition:opacity .15s}.rotate-handle:hover{opacity:1!important}
@@ -153,8 +261,17 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
 .palette-item:hover{background:var(--accent-light);border-color:var(--accent)}
 .palette-item.active{background:var(--accent);border-color:var(--accent)}
 
+/* Collapsible panel header (used by villaStylePicker + objectPalette) */
+.panel-header{display:flex;justify-content:space-between;align-items:center;padding:6px 4px 8px;margin-bottom:6px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;gap:8px}
+.panel-header:hover{color:var(--accent)}
+.panel-title{font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.6px}
+.panel-arrow{font-size:13px;color:var(--muted);transition:transform .2s ease}
+.panel-collapsed .panel-body{display:none!important}
+.panel-collapsed .panel-header{margin-bottom:0;padding-bottom:6px;border-bottom:none}
+.panel-collapsed .panel-arrow{transform:rotate(180deg);color:var(--accent)}
+
 /* Villa Style Picker */
-#villaStylePicker{position:absolute;bottom:10px;left:10px;z-index:20;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:8px;box-shadow:0 2px 10px rgba(0,0,0,.08);display:none}
+#villaStylePicker{position:absolute;bottom:10px;left:10px;z-index:20;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:8px;box-shadow:0 2px 10px rgba(0,0,0,.08);display:none;max-height:calc(100vh - 130px);overflow-y:auto;min-width:140px}
 #villaStylePicker.show{display:block}
 #villaStylePicker .vs-label{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
 .vs-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
@@ -162,6 +279,39 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
 .vs-btn:hover{border-color:var(--accent);background:var(--accent-light)}
 .vs-btn.active{border-color:var(--accent);background:var(--accent-light);color:var(--accent)}
 .vs-swatch{width:22px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.1)}
+
+/* ─── Mobile / tablet adjustments ─── */
+@media (max-width: 900px){
+  #topBar{padding:0 10px;gap:8px}
+  .tb-select{min-width:180px;padding:9px 28px 9px 12px;font-size:13px}
+  .tb-sun{padding:5px 10px;gap:8px}
+}
+@media (max-width: 720px){
+  #topBar{height:auto;min-height:60px;flex-wrap:wrap;padding:8px 10px;gap:8px}
+  .tb-select{flex:1;min-width:0;width:100%;order:1}
+  .tb-sun{order:3;width:100%;max-width:none}
+  .tb-actions{order:2;margin-left:0}
+  #viewport{top:108px!important}
+  #villaStylePicker{padding:6px;max-height:calc(100vh - 130px);max-width:calc(100vw - 100px)}
+  .vs-btn{width:38px;height:38px;font-size:8px}
+  .vs-swatch{width:18px;height:12px}
+  #objectPalette{padding:4px}
+  .palette-item{width:36px!important;height:36px!important;font-size:14px!important}
+}
+@media (max-width: 480px){
+  #topBar{padding:6px 8px;gap:6px}
+  #viewport{top:120px!important}
+  .tb-iconbtn{width:38px;height:38px;font-size:16px}
+  .tb-toggle button{padding:8px 12px;min-width:44px;font-size:12px}
+  .tb-month{padding:5px 22px 5px 8px;font-size:12px}
+  #topTimeDisplay{font-size:13px;min-width:42px}
+  #villaStylePicker{bottom:6px;left:6px;padding:5px;max-width:calc(100vw - 80px)}
+  .vs-grid{grid-template-columns:repeat(3,1fr);gap:3px}
+  .vs-btn{width:34px;height:34px;font-size:7px}
+  .vs-swatch{width:14px;height:10px}
+  #objectPalette{bottom:6px;right:6px}
+  .palette-grid{grid-template-columns:repeat(3,1fr)!important}
+}
 
 /* Spinner */
 .spinner-overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(255,255,255,.4);z-index:15;backdrop-filter:blur(1px)}
@@ -178,6 +328,39 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
 </head>
 <body>
 <div id="app">
+  <!-- Top bar — replaces sidebar -->
+  <div id="topBar">
+    <select id="designSelect" class="tb-select" aria-label="Tasarım seçimi">
+      <option value="serbest">Serbest Tasarım</option>
+      <option value="optimum">Optimum 1 — 80m²</option>
+      <option value="optimum2">Optimum 2 — 80m²</option>
+      <option value="optimum3">Optimum 3 — 70m²</option>
+      <option value="optimum4">Optimum 4 — 70m²</option>
+      <option value="optimum5">Optimum 5 — Y-Radyal</option>
+      <option value="optimum6">Optimum 6 — 80m² + Çıkma</option>
+      <option value="optimum7">Optimum 7 — 70m² + Çıkma</option>
+      <option value="optimum8">Optimum 8 — 80m² + Çıkma + Veranda</option>
+      <option value="optimum9" selected>Optimum 9 — 70m² + Çıkma + Veranda</option>
+    </select>
+    <div class="tb-sun" id="topSun">
+      <span class="tb-sun-icon" aria-hidden="true">☀</span>
+      <input type="range" id="topSunSlider" min="6" max="20" step="0.25" value="14" aria-label="Saat">
+      <span id="topTimeDisplay">14:00</span>
+      <select id="topMonthSelect" class="tb-month" aria-label="Ay">
+        <option value="0">Ocak</option><option value="1">Şubat</option><option value="2">Mart</option>
+        <option value="3" selected>Nisan</option><option value="4">Mayıs</option><option value="5">Haziran</option>
+        <option value="6">Temmuz</option><option value="7">Ağustos</option><option value="8">Eylül</option>
+        <option value="9">Ekim</option><option value="10">Kasım</option><option value="11">Aralık</option>
+      </select>
+    </div>
+    <div class="tb-actions">
+      <div class="tb-toggle" id="topViewToggle">
+        <button data-view="2d">2D</button>
+        <button data-view="3d" class="active">3D</button>
+      </div>
+      <button class="tb-iconbtn" id="topFsBtn" title="Tam Ekran" aria-label="Tam Ekran">⛶</button>
+    </div>
+  </div>
   <aside id="sidebar">
     <!-- Logo -->
     <div class="sb-logo">
@@ -289,7 +472,11 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
       <button class="top-btn" id="fsBtn">&#x26F6;</button>
     </div>
     <div id="objectPalette">
-      <div class="palette-grid">
+      <div class="panel-header" data-collapse-target="objectPalette">
+        <span class="panel-title">Nesneler</span>
+        <span class="panel-arrow">▾</span>
+      </div>
+      <div class="panel-body palette-grid">
         <button class="palette-item" data-obj="cypress" title="Selvi">&#127794;</button>
         <button class="palette-item" data-obj="deciduous" title="Agac">&#127795;</button>
         <button class="palette-item" data-obj="pool" title="Havuz">&#127946;</button>
@@ -303,6 +490,11 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
     </div>
     <!-- Villa Style Picker — per floor -->
     <div id="villaStylePicker">
+      <div class="panel-header" data-collapse-target="villaStylePicker">
+        <span class="panel-title">Tasarım</span>
+        <span class="panel-arrow">▾</span>
+      </div>
+      <div class="panel-body">
       <div class="vs-label">Çatı Terası</div>
       <div class="vs-grid" data-floor="roof">
         <button class="vs-btn active" data-style="beton" title="Beton"><div class="vs-swatch" style="background:#D8D0C8"></div>Beton</button>
@@ -354,6 +546,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         <button class="vs-btn" data-style="turkstonewhite" title="Beyaz Tas"><div class="vs-swatch" style="background:linear-gradient(135deg,#F0E8D0 33%,#F0EAD6 33% 66%,#E0D5B8 66%)"></div>Beyaz Tas</button>
         <button class="vs-btn" data-style="turkstoneblack" title="Siyah Tas (bazalt)"><div class="vs-swatch" style="background:linear-gradient(135deg,#3A3432 33%,#2A2624 33% 66%,#453F3C 66%)"></div>Bazalt</button>
       </div>
+      </div><!-- /panel-body -->
     </div>
     <!-- Shape context menu -->
     <div id="shapeMenu" style="display:none;position:absolute;z-index:30;background:var(--card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.12);overflow:hidden;min-width:140px">
@@ -380,7 +573,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
 // STATE
 // ═══════════════════════════════════════
 const STATE={
-  mode:'parcelled',view:'3d',sidebarOpen:true,isFullscreen:false,showDims:true,
+  mode:'parcelled',view:'3d',sidebarOpen:(window.innerWidth>700),isFullscreen:false,showDims:true,
   floorCount:2,
   villas:[
     {id:'A',cx:10.0,cy:24.0,angle:0,sides:4,vw:9,vh:8.5,customPoly:null,fill:'var(--lot1v)',stroke:'var(--lot1)',text:'var(--lot1)'},
@@ -841,6 +1034,8 @@ document.getElementById('taksLimit').addEventListener('input',function(){STATE.t
 document.getElementById('kaksLimit').addEventListener('input',function(){STATE.kaksLimit=parseFloat(this.value)||.6;enforceTaksKaks()});
 document.getElementById('pFloorCount').addEventListener('input',function(){STATE.pFloorCount=parseInt(this.value)||2;updateStatusBar()});
 document.getElementById('showDims').addEventListener('change',function(){STATE.showDims=this.checked;renderFull()});
+// Initial sidebar state (collapsed on mobile)
+if(!STATE.sidebarOpen)document.getElementById('app').classList.add('sidebar-collapsed');
 document.getElementById('sidebarToggle').addEventListener('click',()=>{STATE.sidebarOpen=!STATE.sidebarOpen;document.getElementById('app').classList.toggle('sidebar-collapsed',!STATE.sidebarOpen);setTimeout(()=>{if(STATE.view==='3d'&&threeRenderer)resizeThreeRenderer()},300)});
 document.getElementById('fsBtn').addEventListener('click',()=>{STATE.isFullscreen=!STATE.isFullscreen;const vp=document.getElementById('viewport');if(STATE.isFullscreen){vp.style.cssText='position:fixed;inset:0;z-index:100';document.getElementById('fsBtn').innerHTML='&#x2715;'}else{vp.style.cssText='';document.getElementById('fsBtn').innerHTML='&#x26F6;'}if(STATE.view==='3d'&&threeRenderer)setTimeout(resizeThreeRenderer,100)});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&STATE.isFullscreen)document.getElementById('fsBtn').click()});
@@ -2245,6 +2440,77 @@ document.querySelectorAll('#villaStylePicker .vs-grid').forEach(function(grid){
     });
   });
 });
+
+// ═══════════════════════════════════════════════════════════
+// TOP BAR — bridge new compact UI to existing handlers
+// ═══════════════════════════════════════════════════════════
+(function setupTopBar(){
+  // Design (mode + divDir) dropdown
+  var designSelect=document.getElementById('designSelect');
+  designSelect.addEventListener('change',function(){
+    var v=this.value;
+    if(v==='serbest'){
+      var freeTab=document.querySelector('.sb-tab[data-mode="free"]');
+      if(freeTab)freeTab.click();
+    }else{
+      var parcelTab=document.querySelector('.sb-tab[data-mode="parcelled"]');
+      if(parcelTab && !parcelTab.classList.contains('active'))parcelTab.click();
+      var dirSel=document.getElementById('dirSelect');
+      if(dirSel){dirSel.value=v;dirSel.dispatchEvent(new Event('change'))}
+    }
+  });
+
+  // Sun slider — sync top bar with hidden sidebar slider
+  var topSlider=document.getElementById('topSunSlider');
+  var topTime=document.getElementById('topTimeDisplay');
+  var topMonth=document.getElementById('topMonthSelect');
+  var oldSlider=document.getElementById('timeSlider');
+  var oldMonth=document.getElementById('monthSelect');
+  function fmtTime(h){var hh=Math.floor(h),mm=Math.round((h-hh)*60);return String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0')}
+  // Initial sync
+  topSlider.value=oldSlider.value;
+  topMonth.value=oldMonth.value;
+  topTime.textContent=fmtTime(parseFloat(topSlider.value));
+  topSlider.addEventListener('input',function(){
+    topTime.textContent=fmtTime(parseFloat(this.value));
+    oldSlider.value=this.value;
+    oldSlider.dispatchEvent(new Event('input'));
+  });
+  topMonth.addEventListener('change',function(){
+    oldMonth.value=this.value;
+    oldMonth.dispatchEvent(new Event('change'));
+  });
+
+  // 2D/3D toggle
+  document.querySelectorAll('#topViewToggle button').forEach(function(b){
+    b.addEventListener('click',function(){
+      document.querySelectorAll('#topViewToggle button').forEach(x=>x.classList.remove('active'));
+      this.classList.add('active');
+      var v=this.dataset.view;
+      var oldBtn=document.querySelector('#viewToggle .toggle-btn[data-view="'+v+'"]');
+      if(oldBtn)oldBtn.click();
+    });
+  });
+
+  // Fullscreen
+  document.getElementById('topFsBtn').addEventListener('click',function(){
+    var oldFs=document.getElementById('fsBtn');
+    if(oldFs)oldFs.click();
+  });
+
+  // Collapsible panels — click panel header to fold/unfold its body
+  document.querySelectorAll('.panel-header').forEach(function(h){
+    h.addEventListener('click',function(){
+      var targetId=h.dataset.collapseTarget;
+      var panel=document.getElementById(targetId);
+      if(panel)panel.classList.toggle('panel-collapsed');
+    });
+  });
+
+  // Set the initial design select so it reflects state on load
+  if(STATE.mode==='free'){designSelect.value='serbest'}
+  else if(STATE.divDir){designSelect.value=STATE.divDir}
+})();
 </script>
 </body>
 </html>
