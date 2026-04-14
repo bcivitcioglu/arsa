@@ -16,6 +16,8 @@ THREE.OrbitControls=function(cam,el){
   self.rotateSpeedMouse=1.0;
   self.rotateSpeedTouch=0.35;
   self.zoomSpeed=0.05;
+  self.pinchSensitivity=0.35; // applies fraction of pinch ratio (lower = slower zoom)
+  self.touchPanSensitivity=0.4; // scales two-finger pan delta
   var sph=new THREE.Spherical(),sphD=new THREE.Spherical();
   var sc=1,panOff=new THREE.Vector3();
   var off=new THREE.Vector3();
@@ -72,17 +74,20 @@ THREE.OrbitControls=function(cam,el){
         sphD.phi=-2*Math.PI*dy/el.clientHeight*spd;
       }
     }else if(pointers.size===2){
-      // Two pointers — pinch zoom + two-finger pan
+      // Two pointers — pinch zoom + two-finger pan (dampened for touch comfort)
       var pts=Array.from(pointers.values());
       var dist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
-      if(lastPinchDist>0){
-        sc*=lastPinchDist/dist; // pinch in (smaller dist) => zoom out (larger sc)
+      if(lastPinchDist>0 && dist>0){
+        // Apply only a fraction of the natural pinch ratio (slower, more controllable)
+        var ratio=lastPinchDist/dist;
+        var dampedRatio=1+(ratio-1)*self.pinchSensitivity;
+        sc*=dampedRatio;
       }
       lastPinchDist=dist;
-      // Two-finger pan based on midpoint movement
+      // Two-finger pan — scaled down for comfort
       var mx=(pts[0].x+pts[1].x)/2, my=(pts[0].y+pts[1].y)/2;
       if(lastPanMid){
-        doPan(mx-lastPanMid.x, my-lastPanMid.y);
+        doPan((mx-lastPanMid.x)*self.touchPanSensitivity, (my-lastPanMid.y)*self.touchPanSensitivity);
       }
       lastPanMid={x:mx,y:my};
       // Suppress single-finger rotation while pinching
@@ -262,13 +267,16 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
 .palette-item.active{background:var(--accent);border-color:var(--accent)}
 
 /* Collapsible panel header (used by villaStylePicker + objectPalette) */
-.panel-header{display:flex;justify-content:space-between;align-items:center;padding:6px 4px 8px;margin-bottom:6px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;gap:8px}
-.panel-header:hover{color:var(--accent)}
-.panel-title{font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.6px}
-.panel-arrow{font-size:13px;color:var(--muted);transition:transform .2s ease}
+.panel-header{display:flex;justify-content:space-between;align-items:center;padding:8px 8px 10px;margin-bottom:6px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;gap:10px;-webkit-tap-highlight-color:rgba(45,106,79,.12);min-height:36px}
+.panel-header:hover,.panel-header:active{color:var(--accent)}
+.panel-title{font-size:13px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
+.panel-arrow{font-size:14px;color:var(--muted);transition:transform .2s ease;line-height:1}
 .panel-collapsed .panel-body{display:none!important}
-.panel-collapsed .panel-header{margin-bottom:0;padding-bottom:6px;border-bottom:none}
-.panel-collapsed .panel-arrow{transform:rotate(180deg);color:var(--accent)}
+/* When collapsed, panel becomes a clear, larger pill button with accent color so user can find it */
+.panel-collapsed{padding:0!important;background:var(--accent)!important;border-color:var(--accent)!important;min-width:0!important}
+.panel-collapsed .panel-header{margin:0;padding:12px 16px;border-bottom:none;color:#FFF}
+.panel-collapsed .panel-title{color:#FFF}
+.panel-collapsed .panel-arrow{color:#FFF;transform:rotate(180deg)}
 
 /* Villa Style Picker */
 #villaStylePicker{position:absolute;bottom:10px;left:10px;z-index:20;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:8px;box-shadow:0 2px 10px rgba(0,0,0,.08);display:none;max-height:calc(100vh - 130px);overflow-y:auto;min-width:140px}
