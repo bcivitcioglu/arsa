@@ -1234,7 +1234,7 @@ function buildHouseFromPoly(poly2D,height,color){
 // Modern villa builder for Optimum 1-4 modes — unified edge-based approach for all shapes
 // rectCantilever: if true, apply 1.5m cantilever to rectangle villas
 // addVeranda: if true, extend a wooden shade veranda (4m) from the garden-side edge
-function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
+function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode){
   var g=new THREE.Group();
   var n=poly2D.length;
   var cent=polyCentroid(poly2D);
@@ -1287,20 +1287,43 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda){
   var f2poly=poly2D, f2edges=edges, f2n=n, f2longIdx=longIdx, f2cent=cent, hasCantilever=false;
   var gardenEdgeIdx=-1; // index of the "garden side" edge (used for veranda)
   var isRoad=[]; // true for cantilever edges (populated by cantilever blocks below)
-  if(n===4 && rectCantilever){
+  if(n===4 && (rectCantilever||opt5Mode)){
     var CANT_D=1.5;
-    // Identify the 2 short edges (road + garden sides — perpendicular to road direction)
     isRoad=[false,false,false,false];
-    if(edges[0].len<edges[1].len){isRoad[0]=true;isRoad[2]=true}
-    else{isRoad[1]=true;isRoad[3]=true}
-    // Garden edge = the short cantilever edge with HIGHEST projection along sweep (farther from road)
-    var maxSweepProj=-Infinity;
-    for(var grei=0;grei<n;grei++){
-      if(!isRoad[grei])continue;
-      var ge2=edges[grei];
-      var gmx=(ge2.ax+ge2.bx)/2, gmy=(ge2.ay+ge2.by)/2;
-      var sproj=gmx*pRoadNx+gmy*pRoadNy;
-      if(sproj>maxSweepProj){maxSweepProj=sproj;gardenEdgeIdx=grei}
+    if(opt5Mode){
+      // Plan B: cantilever any edge NOT facing an internal divider (CENTER↔BP0/1/2)
+      // Edge is "facing a neighbor" if its midpoint lies within ~4.5m of a divider line.
+      // Otherwise it faces the road or own buildable area → cantilever 1.5m allowed.
+      var dividers=[[OPT5_CENTER,OPT5_BP0],[OPT5_CENTER,OPT5_BP1],[OPT5_CENTER,OPT5_BP2]];
+      for(var oei=0;oei<4;oei++){
+        var oea=poly2D[oei], oeb=poly2D[(oei+1)%4];
+        var omx=(oea[0]+oeb[0])/2, omy=(oea[1]+oeb[1])/2;
+        var minDistToDiv=Infinity;
+        for(var dvi=0;dvi<3;dvi++){
+          var dva=dividers[dvi][0], dvb=dividers[dvi][1];
+          var ddx=dvb[0]-dva[0], ddy=dvb[1]-dva[1];
+          var dlen2=ddx*ddx+ddy*ddy;
+          if(dlen2<1e-9)continue;
+          var dvt=Math.max(0,Math.min(1,((omx-dva[0])*ddx+(omy-dva[1])*ddy)/dlen2));
+          var dvpx=dva[0]+dvt*ddx, dvpy=dva[1]+dvt*ddy;
+          var dvd=Math.hypot(omx-dvpx, omy-dvpy);
+          if(dvd<minDistToDiv) minDistToDiv=dvd;
+        }
+        if(minDistToDiv>4.5) isRoad[oei]=true;
+      }
+    }else{
+      // Opt 6-9 rectangle: cantilever the 2 short edges (road + garden)
+      if(edges[0].len<edges[1].len){isRoad[0]=true;isRoad[2]=true}
+      else{isRoad[1]=true;isRoad[3]=true}
+      // Garden edge = the short cantilever edge with HIGHEST projection along sweep (farther from road)
+      var maxSweepProj=-Infinity;
+      for(var grei=0;grei<n;grei++){
+        if(!isRoad[grei])continue;
+        var ge2=edges[grei];
+        var gmx=(ge2.ax+ge2.bx)/2, gmy=(ge2.ay+ge2.by)/2;
+        var sproj=gmx*pRoadNx+gmy*pRoadNy;
+        if(sproj>maxSweepProj){maxSweepProj=sproj;gardenEdgeIdx=grei}
+      }
     }
     f2poly=[];
     for(var vi=0;vi<n;vi++){
@@ -1994,8 +2017,8 @@ function buildVillas3D(){
       for(let i=0;i<2;i++){const r=STATE.pCommonRectAB.rects[i];if(r&&r.length>=3){const house=buildModernVilla(r,h,VILLA_COLORS[i],rectCantilever,addVeranda);villaGroup.add(house)}}
       if(STATE.pClipC&&STATE.pClipC.length>=3){const house=buildModernVilla(STATE.pClipC,h,VILLA_COLORS[2],false,addVeranda);villaGroup.add(house)}
     }else if(dir==='optimum5'){
-      // Optimum 5: modern villas — 3 rectangular villas
-      for(let i=0;i<3;i++){const p=STATE.pVillaPolys[i];if(p&&p.length>=3){const house=buildModernVilla(p,h,VILLA_COLORS[i]);villaGroup.add(house)}}
+      // Optimum 5 (Plan B): 3 rectangular villas with divider-aware cantilever (1.5m on edges away from neighbors)
+      for(let i=0;i<3;i++){const p=STATE.pVillaPolys[i];if(p&&p.length>=3){const house=buildModernVilla(p,h,VILLA_COLORS[i],false,false,true);villaGroup.add(house)}}
     }else{
       for(let i=0;i<3;i++){const p=STATE.pVillaPolys[i];if(p&&p.length>=3){const house=buildHouseFromPoly(p,h,VILLA_COLORS[i]);villaGroup.add(house)}}
     }
