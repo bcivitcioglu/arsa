@@ -6,6 +6,7 @@
 <title>Arazi Planlayici</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script>
 THREE.OrbitControls=function(cam,el){
   var self=this;self.enabled=true;
@@ -238,6 +239,24 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 #viewport{overflow:hidden;background:var(--bg);top:60px!important;left:0!important;right:0!important;bottom:0!important}
 #viewport svg,#viewport canvas{position:absolute;inset:0;width:100%;height:100%}
 #threeCanvas{touch-action:none}
+#modeToggle{position:absolute;top:52px;right:10px;z-index:25;display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);font-family:inherit;font-size:11px;font-weight:600;color:var(--muted);cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.06);user-select:none}
+#modeToggle .mode-label{transition:color .15s}
+#modeToggle .ios-switch{position:relative;display:inline-block;width:36px;height:20px}
+#modeToggle .ios-switch input{display:none}
+#modeToggle .ios-switch .track{position:absolute;inset:0;background:#bbb;border-radius:11px;transition:background .2s;cursor:pointer}
+#modeToggle .ios-switch .thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;background:#fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .2s}
+#modeToggle .ios-switch input:checked+.track{background:#34C759}
+#modeToggle .ios-switch input:checked+.track .thumb{transform:translateX(16px)}
+#modeToggle.is-character .mode-label:nth-child(1){color:#aaa}
+#modeToggle:not(.is-character) .mode-label:nth-child(3){color:#aaa}
+#fpHint{position:absolute;top:90px;right:10px;z-index:25;padding:8px 12px;background:rgba(20,20,20,.78);color:#fff;border-radius:6px;font-size:12px;display:none;box-shadow:0 2px 6px rgba(0,0,0,.3);max-width:320px}
+#fpPrompt{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:26;padding:10px 18px;background:rgba(0,0,0,.7);color:#fff;border-radius:8px;font-size:14px;font-weight:600;display:none;pointer-events:none;text-shadow:0 1px 2px #000}
+#touchControls{position:absolute;inset:0;z-index:24;pointer-events:none;display:none}
+#touchStick{position:absolute;bottom:24px;left:24px;width:130px;height:130px;border-radius:50%;background:rgba(0,0,0,.25);border:2px solid rgba(255,255,255,.5);pointer-events:auto;touch-action:none}
+#touchStickKnob{position:absolute;left:50%;top:50%;width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,.78);border:2px solid rgba(0,0,0,.3);transform:translate(-50%,-50%);transition:none}
+#touchLook{position:absolute;bottom:24px;right:24px;width:130px;height:130px;border-radius:50%;background:rgba(0,0,0,.25);border:2px solid rgba(255,255,255,.5);color:#fff;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;text-shadow:0 1px 2px #000}
+#touchInteract{position:absolute;bottom:170px;right:50px;width:74px;height:74px;border-radius:50%;background:rgba(40,140,200,.85);color:#fff;font-size:18px;font-weight:700;border:2px solid rgba(255,255,255,.5);pointer-events:auto;touch-action:none;cursor:pointer}
+@media (pointer:coarse){#touchControls.show{display:block}}
 
 /* Hide old top controls (replaced by top bar) */
 #topControls{display:none!important}
@@ -477,6 +496,18 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
   <div id="viewport">
     <svg id="map" viewBox="0 0 600 600"></svg>
     <canvas id="threeCanvas" style="display:none"></canvas>
+    <label id="modeToggle" title="Karakter modunu aç/kapat">
+      <span class="mode-label">Normal</span>
+      <span class="ios-switch"><input type="checkbox" id="modeToggleInput"><span class="track"><span class="thumb"></span></span></span>
+      <span class="mode-label">Karakter</span>
+    </label>
+    <div id="fpHint">WASD: hareket · Yön Tuşları: bak · Kapı: otomatik · P: Panjur · ESC: çık · Fare: UI serbest</div>
+    <div id="fpPrompt"></div>
+    <div id="touchControls">
+      <div id="touchStick"><div id="touchStickKnob"></div></div>
+      <div id="touchLook">BAK</div>
+      <button id="touchInteract" title="Kapı / Panjur">E</button>
+    </div>
     <button id="sidebarToggle">&#9776;</button>
     <div id="topControls">
       <div class="btn-group" id="viewToggle">
@@ -1164,71 +1195,434 @@ function initThreeScene(canvas){
 function resizeThreeRenderer(){if(!threeRenderer)return;const vp=document.getElementById('viewport');const w=vp.clientWidth,h=vp.clientHeight;threeRenderer.setSize(w,h);if(threeCamera){threeCamera.aspect=w/h;threeCamera.updateProjectionMatrix()}}
 window.addEventListener('resize',()=>{if(threeInited&&STATE.view==='3d')resizeThreeRenderer()});
 
-// Universal house builder — works for any polygon footprint
+// ═══════════════════════════════════════════════════════════════
+// FPV / WALK MODE INFRASTRUCTURE
+// wallColliders: line segments {ax, az, bx, bz, active} in world coords (already with subasman lift)
+// doorPivots: door pivot Object3Ds with userData {isDoor, isOpen, colliderIdx}
+// villaEntries: spawn points for FP mode {pos: Vector3, lookAt: Vector3}
+// ═══════════════════════════════════════════════════════════════
+var wallColliders=[];
+var doorPivots=[];
+var villaEntries=[];
+var stairZones=[]; // {cx, cz, dirX, dirZ, runLen, width, baseY, topY, floor} in world coords
+var villaFootprints=[]; // {poly: [[wx, wz],...], floorYs: [groundY, F2Y, roofY]}
+var windowPanes=[]; // {pane (mesh), shutter (mesh), wx, wz, faceX, faceZ, panjurDown, anim}
+
+// Register a window pane for FP panjur (P key) interaction.
+// The shutter is OPAQUE and casts shadows — it actually blocks light when down.
+// Animated by scaling down from the window top (realistic rolling-shutter effect).
+function registerWindowPane(pane,e,t,w,centerY,h,faceAngle,gOff,liftY,floorTag){
+  var wx2D=e.ax+t*e.dx, wy2D=e.ay+t*e.dy;
+  var worldX=wx2D+e.nx*gOff;
+  var worldZ=-(wy2D+e.ny*gOff);
+  var faceX=e.nx, faceZ=-e.ny;
+  // Opaque material with the panjur texture — blocks view AND casts a real shadow.
+  // NOTE: transparent/opacity are not set → material is fully opaque by default.
+  var shMat=new THREE.MeshStandardMaterial({map:makePanjurTexture(),color:0x3A3A3A,roughness:0.7,metalness:0.2});
+  // Oversize slightly so no light leaks around edges; 3cm depth for robust shadow casting.
+  var shutter=new THREE.Mesh(new THREE.BoxGeometry(w*1.05,h*1.05,0.03),shMat);
+  shutter.position.copy(pane.position);
+  // Push outside the wall's outer face (wall thickness is 0.22m → outer face is 0.11m outward from edge line).
+  // Pane is 0.06m outward; we need another 0.08m to clear the wall and let the sun hit the shutter first.
+  shutter.position.x += e.nx*0.08;
+  shutter.position.z += -e.ny*0.08;
+  shutter.rotation.y=faceAngle;
+  shutter.castShadow=true;
+  shutter.receiveShadow=true;
+  shutter.visible=false;
+  shutter.scale.y=0.001;
+  pane.parent.add(shutter);
+  windowPanes.push({
+    pane:pane, shutter:shutter,
+    wx:worldX, wz:worldZ, faceX:faceX, faceZ:faceZ,
+    panjurDown:false, anim:0,
+    floor:floorTag, liftY:liftY,
+    centerY:centerY, h:h*1.05
+  });
+}
+
+// Point-in-polygon (ray casting), poly = [[x, z], ...]
+function pointInPoly2D(x, z, poly){
+  var inside=false;
+  for(var i=0,j=poly.length-1;i<poly.length;j=i++){
+    var xi=poly[i][0], zi=poly[i][1];
+    var xj=poly[j][0], zj=poly[j][1];
+    if(((zi>z)!==(zj>z)) && (x<(xj-xi)*(z-zi)/(zj-zi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+
+// Build wall panels with openings (windows + doors leave actual gaps)
+// polyArr: 2D polygon vertices [[x,y],...]
+// edgesArr: precomputed edges with {ax,ay,bx,by,dx,dy,len,angle,ux,uy,nx,ny}
+// yBase: base Y in local villa coords
+// wallH: wall height
+// openingsByEdge: array indexed by edge idx, each entry array of {t, width, height, sillY, type, pivotId?}
+// mat: wall material
+// group: parent group
+// thickness: wall thickness (default 0.22m)
+// liftY: world Y offset to add when storing colliders (e.g. SUB_H)
+function buildWallPanels(polyArr,edgesArr,yBase,wallH,openingsByEdge,mat,group,thickness,liftY,colliderTag){
+  thickness=thickness||0.22;
+  liftY=liftY||0;
+  var n=polyArr.length;
+  for(var ei=0;ei<n;ei++){
+    var e=edgesArr[ei];
+    var ops=((openingsByEdge&&openingsByEdge[ei])||[]).slice().sort(function(a,b){return a.t-b.t});
+    var segments=[];
+    if(ops.length===0){
+      segments.push({tStart:0,tEnd:1,yLow:0,yHigh:wallH});
+    }else{
+      var firstT=ops[0].t-ops[0].width/(2*e.len);
+      if(firstT>0.001) segments.push({tStart:0,tEnd:firstT,yLow:0,yHigh:wallH});
+      for(var oi=0;oi<ops.length;oi++){
+        var op=ops[oi];
+        var t1=op.t-op.width/(2*e.len);
+        var t2=op.t+op.width/(2*e.len);
+        if(t1<0)t1=0; if(t2>1)t2=1;
+        if(op.sillY>0.01) segments.push({tStart:t1,tEnd:t2,yLow:0,yHigh:op.sillY});
+        if(op.sillY+op.height<wallH-0.01) segments.push({tStart:t1,tEnd:t2,yLow:op.sillY+op.height,yHigh:wallH});
+        if(oi<ops.length-1){
+          var nx=ops[oi+1];
+          var nt1=nx.t-nx.width/(2*e.len);
+          if(nt1>t2+0.001) segments.push({tStart:t2,tEnd:nt1,yLow:0,yHigh:wallH});
+        }
+      }
+      var last=ops[ops.length-1];
+      var lastT=last.t+last.width/(2*e.len);
+      if(lastT<0.999) segments.push({tStart:lastT,tEnd:1,yLow:0,yHigh:wallH});
+    }
+    for(var si=0;si<segments.length;si++){
+      var s=segments[si];
+      var segLen=(s.tEnd-s.tStart)*e.len;
+      if(segLen<0.01)continue;
+      var segH=s.yHigh-s.yLow;
+      if(segH<0.01)continue;
+      var midT=(s.tStart+s.tEnd)/2;
+      var midX=e.ax+midT*e.dx;
+      var midY=e.ay+midT*e.dy;
+      var midYworld=yBase+(s.yLow+s.yHigh)/2;
+      var box=new THREE.Mesh(new THREE.BoxGeometry(segLen,segH,thickness),mat);
+      box.position.set(midX,midYworld,-midY);
+      box.rotation.y=e.angle;
+      box.castShadow=true;
+      box.receiveShadow=true;
+      group.add(box);
+      // Add collider for EVERY segment (windows have a sill/lintel; player blocked from walking through windows)
+      if(colliderTag){
+        var c1x=e.ax+s.tStart*e.dx, c1y=e.ay+s.tStart*e.dy;
+        var c2x=e.ax+s.tEnd*e.dx, c2y=e.ay+s.tEnd*e.dy;
+        wallColliders.push({ax:c1x,az:-c1y,bx:c2x,bz:-c2y,active:true,floor:colliderTag,yLow:liftY+yBase+s.yLow,yHigh:liftY+yBase+s.yHigh});
+      }
+    }
+    // Also add a "window opening" collider that blocks at body level (between sill and lintel) — so windows aren't walkable
+    for(var oi=0;oi<ops.length;oi++){
+      var op=ops[oi];
+      if(op.type==='door') continue; // doors get a separate toggleable collider
+      var tA=op.t-op.width/(2*e.len);
+      var tB=op.t+op.width/(2*e.len);
+      var c1x=e.ax+tA*e.dx, c1y=e.ay+tA*e.dy;
+      var c2x=e.ax+tB*e.dx, c2y=e.ay+tB*e.dy;
+      // Player body Y range: feet to head. Block at full opening height (sill→lintel).
+      wallColliders.push({ax:c1x,az:-c1y,bx:c2x,bz:-c2y,active:true,floor:colliderTag,yLow:liftY+yBase+op.sillY,yHigh:liftY+yBase+op.sillY+op.height,isWindow:(op.type==='window')});
+    }
+  }
+  // Corner columns at vertices to fill non-90 corner gaps
+  for(var ci=0;ci<n;ci++){
+    var v=polyArr[ci];
+    var col=new THREE.Mesh(new THREE.BoxGeometry(thickness,wallH,thickness),mat);
+    col.position.set(v[0],yBase+wallH/2,-v[1]);
+    col.castShadow=true;
+    col.receiveShadow=true;
+    group.add(col);
+  }
+}
+
+// Helper: build one straight flight of FLOATING treads. Each tread is a thin slab (6cm) at its
+// top height, with nothing underneath — cantilevered from the adjacent wall for a modern look.
+function buildStairFlight(startX,startZ,baseY,dirX,dirZ,stepCount,stepRise,stepTread,width,mat,group){
+  var rotY=Math.atan2(dirX,dirZ);
+  var TREAD_THICK=0.06;
+  for(var i=0;i<stepCount;i++){
+    var stepTopY=baseY+(i+1)*stepRise;
+    var treadCY=stepTopY-TREAD_THICK/2;
+    var fwd=(i+0.5)*stepTread;
+    var sx=startX+fwd*dirX;
+    var sz=startZ+fwd*dirZ;
+    var tread=new THREE.Mesh(new THREE.BoxGeometry(width,TREAD_THICK,stepTread),mat);
+    tread.position.set(sx,treadCY,sz);
+    tread.rotation.y=rotY;
+    tread.castShadow=true;
+    tread.receiveShadow=true;
+    group.add(tread);
+  }
+}
+
+// U-shaped (switchback) stair with half-height landing.
+// startX,startZ: world XZ at base of flight 1.
+// totalRise: vertical rise (e.g. F1+SLAB2).
+// dirX,dirZ: unit world XZ direction of flight 1's climb.
+// localBaseY: Y in GROUP-LOCAL coords for the bottom step's base (group is later lifted).
+// worldLiftY: world Y of the group (for stairZones — they live in world coords).
+// Returns {totalDir,totalPerp,f1Run,landingDepth,landingY,startX,startZ,dirX,dirZ} for hole computation.
+// U-stair builder.
+// Two flights go in opposite directions with a landing. Four positions involved:
+//   posA: at perp=0,         going +dir  (flight 1 slot)
+//   posB: at perp=+width,    going -dir  (flight 2 slot, offset by width)
+// By default posA is the BOTTOM flight (ascends baseY→landingY) and posB is the TOP.
+// swapYHalves=true → swap which slot is bottom vs top:
+//   posB becomes the BOTTOM flight (first step is at posB = HIGH dir, perp=+w)
+//   posA becomes the TOP flight    (last step is at posA = HIGH dir, perp=0 near wall)
+function buildUStair(startX,startZ,totalRise,dirX,dirZ,width,localBaseY,worldLiftY,mat,group,floorTag,flipPerp,swapYHalves){
+  if(totalRise<0.1)return null;
+  var stepRise=0.175, stepTread=0.28;
+  var stepCount=Math.max(4,Math.round(totalRise/stepRise));
+  stepRise=totalRise/stepCount;
+  var f1Steps=Math.ceil(stepCount/2);
+  var f2Steps=stepCount-f1Steps;
+  var f1Run=f1Steps*stepTread;
+  var f2Run=f2Steps*stepTread;
+  var perpX=flipPerp?dirZ:-dirZ, perpZ=flipPerp?-dirX:dirX;
+  var landingDepth=stepTread+0.40;
+  var landingWidth=2*width;
+  var localLandingY=localBaseY+f1Steps*stepRise;
+  // Position A (slot 1): starts at startX/startZ, goes +dir, at perp=0
+  var posAx=startX, posAz=startZ, posAdirX=dirX, posAdirZ=dirZ;
+  // Position B (slot 2): at high-dir end, perp=+width, goes -dir
+  var f2StartDir=f1Run+landingDepth-stepTread*1.5;
+  var posBx=startX+f2StartDir*dirX+width*perpX;
+  var posBz=startZ+f2StartDir*dirZ+width*perpZ;
+  var posBdirX=-dirX, posBdirZ=-dirZ;
+  // Landing slab must connect the TOPs of the two flights at landingY.
+  //   Default:   flights meet at HIGH dir — flight A ends at dir=f1Run, flight B starts at dir=f2StartDir.
+  //   Swapped Y: flights meet at LOW  dir — flight B's last step center is at dir=(f2StartDir − (f2Steps−0.5)·stepTread),
+  //              and flight A's "start" is at dir=0. Landing centers at the midpoint of those two.
+  var bottomEndDir=f2StartDir-(f2Steps-0.5)*stepTread;          // flight B's top-step center (dir)
+  var landingDirOffset=swapYHalves
+    ?(bottomEndDir)/2                                           // midpoint between 0 and bottomEndDir
+    :f1Run+landingDepth/2-stepTread/2;
+  var landingPerpOffset=width/2;
+  var landingCX=startX+landingDirOffset*dirX+landingPerpOffset*perpX;
+  var landingCZ=startZ+landingDirOffset*dirZ+landingPerpOffset*perpZ;
+  var landingSlab=new THREE.Mesh(new THREE.BoxGeometry(landingWidth,0.06,landingDepth),mat);
+  landingSlab.position.set(landingCX,localLandingY-0.03,landingCZ);
+  landingSlab.rotation.y=Math.atan2(dirX,dirZ);
+  landingSlab.castShadow=true; landingSlab.receiveShadow=true;
+  group.add(landingSlab);
+  // Choose which slot is BOTTOM (baseY→landingY) and which is TOP (landingY→totalRise)
+  var bottomPos=swapYHalves?{x:posBx,z:posBz,dirX:posBdirX,dirZ:posBdirZ,steps:f2Steps}:{x:posAx,z:posAz,dirX:posAdirX,dirZ:posAdirZ,steps:f1Steps};
+  var topPos   =swapYHalves?{x:posAx,z:posAz,dirX:posAdirX,dirZ:posAdirZ,steps:f1Steps}:{x:posBx,z:posBz,dirX:posBdirX,dirZ:posBdirZ,steps:f2Steps};
+  buildStairFlight(bottomPos.x,bottomPos.z,localBaseY   ,bottomPos.dirX,bottomPos.dirZ,bottomPos.steps,stepRise,stepTread,width,mat,group);
+  buildStairFlight(topPos.x   ,topPos.z   ,localLandingY,topPos.dirX   ,topPos.dirZ   ,topPos.steps   ,stepRise,stepTread,width,mat,group);
+  // Register FP zones (using physical run lengths and world Y ranges)
+  if(floorTag){
+    var wBase=worldLiftY+localBaseY, wLand=worldLiftY+localLandingY, wTop=worldLiftY+localBaseY+totalRise;
+    var bottomRun=bottomPos.steps*stepTread;
+    var topRun   =topPos.steps*stepTread;
+    stairZones.push({cx:bottomPos.x,cz:bottomPos.z,dirX:bottomPos.dirX,dirZ:bottomPos.dirZ,runLen:bottomRun,width:width,baseY:wBase,topY:wLand,floor:floorTag+'_f1'});
+    stairZones.push({cx:landingCX-(landingDepth/2-stepTread/2)*dirX,cz:landingCZ-(landingDepth/2-stepTread/2)*dirZ,dirX:dirX,dirZ:dirZ,runLen:landingDepth,width:landingWidth,baseY:wLand,topY:wLand,floor:floorTag+'_land'});
+    stairZones.push({cx:topPos.x,cz:topPos.z,dirX:topPos.dirX,dirZ:topPos.dirZ,runLen:topRun,width:width,baseY:wLand,topY:wTop,floor:floorTag+'_f2'});
+  }
+  return {totalDir:f1Run+landingDepth, totalPerp:2*width, f1Run:f1Run, landingDepth:landingDepth, landingY:localLandingY, startX:startX, startZ:startZ, dirX:dirX, dirZ:dirZ, width:width};
+}
+
+// Compute the 4 corners (2D poly coords) of the stair hole rectangle for floor cuts.
+// info: returned by buildUStair. dirX2D, dirY2D: 2D flight direction in poly coords.
+// dirMin/Max, perpMin/Max: extents in stair-local (a, p) coords.
+function makeStairHoleRect2D(infoStartX2D,infoStartY2D,dirX2D,dirY2D,dirMin,dirMax,perpMin,perpMax){
+  // 2D perp (right of flight): (dirY2D, -dirX2D)
+  var pX=dirY2D, pY=-dirX2D;
+  return [
+    [infoStartX2D+dirMin*dirX2D+perpMin*pX, infoStartY2D+dirMin*dirY2D+perpMin*pY],
+    [infoStartX2D+dirMax*dirX2D+perpMin*pX, infoStartY2D+dirMax*dirY2D+perpMin*pY],
+    [infoStartX2D+dirMax*dirX2D+perpMax*pX, infoStartY2D+dirMax*dirY2D+perpMax*pY],
+    [infoStartX2D+dirMin*dirX2D+perpMax*pX, infoStartY2D+dirMin*dirY2D+perpMax*pY]
+  ];
+}
+
+// Backwards-compat alias (now unused but kept defensively).
+function buildStaircase(cx,cz,yBase,yTop,dirX,dirZ,width,mat,group,liftY,floorTag){
+  return buildUStair(cx,cz,yTop-yBase,dirX,dirZ,width,yBase,liftY,mat,group,floorTag);
+}
+
+// Build a hinged door (pivot + door mesh) — for animation in FP mode
+// hingeX, hingeZ: world position of hinge (door rotates around vertical axis here)
+// width, height: door dimensions
+// faceAngle: door's face direction (the existing rotation.y used for window planes)
+// edgeAngle: edge tangent direction (for door swing — hinge is at one end, door extends along edge)
+// swingSign: +1 or -1 (which way the door opens — into or away from interior)
+// mat: door material
+// returns the pivot Object3D (with userData.isDoor=true)
+function buildHingedDoor(hingeX,hingeY,hingeZ,width,height,baseRotY,swingSign,mat,group){
+  var pivot=new THREE.Object3D();
+  pivot.position.set(hingeX,hingeY,hingeZ);
+  pivot.rotation.y=baseRotY;
+  var door=new THREE.Mesh(new THREE.BoxGeometry(width,height,0.05),mat);
+  door.position.set(width/2,0,0);
+  door.castShadow=true;
+  door.receiveShadow=true;
+  // Doorknobs: small spheres on each side of the door, ~95cm above the floor where it opens.
+  // The door MESH has its geometry centered at origin, so door-local X spans [-width/2, +width/2]
+  // and door-local Y spans [-height/2, +height/2].
+  //   Free-edge X = +width/2 (hinge is at -width/2). Inset 10cm.
+  //   Handle Y = bottom + 0.95 = -height/2 + 0.95.
+  //   Door surface in Z is at ±0.025 (door is 5cm thick); knob protrudes a bit past that.
+  var handleMat=new THREE.MeshStandardMaterial({color:0xCFCFCF,metalness:0.85,roughness:0.25});
+  var handleX=(width/2)-0.10;
+  var handleY=(-height/2)+0.95;
+  var knobGeo=new THREE.SphereGeometry(0.035,12,10);
+  var knobOuter=new THREE.Mesh(knobGeo,handleMat);
+  knobOuter.position.set(handleX,handleY,0.05);
+  door.add(knobOuter);
+  var knobInner=new THREE.Mesh(knobGeo,handleMat);
+  knobInner.position.set(handleX,handleY,-0.05);
+  door.add(knobInner);
+  pivot.add(door);
+  pivot.userData.isDoor=true;
+  pivot.userData.isOpen=false;
+  pivot.userData.baseRot=baseRotY;
+  pivot.userData.openRot=baseRotY+(Math.PI/2)*((swingSign||1));
+  group.add(pivot);
+  doorPivots.push(pivot);
+  return pivot;
+}
+
+// Glass material — transmissive (light passes through), used for window panes inside openings
+function makeGlassMaterial(emissive){
+  var props={
+    color: emissive ? 0xE8D0A0 : 0xC8DCE8,
+    transparent: true,
+    opacity: emissive ? 0.55 : 0.25,
+    roughness: 0.05,
+    metalness: 0.0,
+    side: THREE.DoubleSide
+  };
+  if(emissive){
+    props.emissive=0xFFD090;
+    props.emissiveIntensity=0.4;
+  }
+  // Try MeshPhysicalMaterial with transmission for true glass effect
+  try{
+    var m=new THREE.MeshPhysicalMaterial(props);
+    m.transmission=emissive?0.3:0.7;
+    m.ior=1.5;
+    m.thickness=0.05;
+    m.clearcoat=0.3;
+    m.clearcoatRoughness=0.15;
+    return m;
+  }catch(err){
+    return new THREE.MeshStandardMaterial(props);
+  }
+}
+
+// Universal house builder — works for any polygon footprint (hollow walls, glass windows, hinged door)
 function buildHouseFromPoly(poly2D,height,color){
   const g=new THREE.Group();
-  // Walls — extrude polygon
-  const shape=new THREE.Shape();
-  shape.moveTo(poly2D[0][0],poly2D[0][1]);
-  for(let i=1;i<poly2D.length;i++)shape.lineTo(poly2D[i][0],poly2D[i][1]);
-  shape.closePath();
-  const wallGeo=new THREE.ExtrudeGeometry(shape,{depth:height,bevelEnabled:false});
-  wallGeo.rotateX(-Math.PI/2);
-  const wallMesh=new THREE.Mesh(wallGeo,new THREE.MeshPhongMaterial({color}));
-  wallMesh.castShadow=true;wallMesh.receiveShadow=true;g.add(wallMesh);
-  // Roof — pyramid/hip: center peak connected to each edge top
   const cent=polyCentroid(poly2D);
-  const roofH=height*0.35;
   const n=poly2D.length;
-  const verts=[];const indices=[];
-  // Apex
-  verts.push(cent[0],height+roofH,-cent[1]); // index 0
-  // Edge top vertices
-  for(let i=0;i<n;i++)verts.push(poly2D[i][0],height,-poly2D[i][1]); // index 1..n
-  // Triangles from apex to each edge
+  // Build edge info
+  const edges=[];
+  let longestEdge=0,longestIdx=0;
+  for(let i=0;i<n;i++){
+    const a=poly2D[i],b=poly2D[(i+1)%n];
+    const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
+    const angle=Math.atan2(dy,dx);
+    let nx=-dy/len,ny=dx/len;
+    const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;
+    if((mx+nx-cent[0])*(mx+nx-cent[0])+(my+ny-cent[1])*(my+ny-cent[1])<(mx-nx-cent[0])*(mx-nx-cent[0])+(my-ny-cent[1])*(my-ny-cent[1])){nx=-nx;ny=-ny}
+    edges.push({ax:a[0],ay:a[1],bx:b[0],by:b[1],dx:dx,dy:dy,len:len,angle:angle,ux:dx/len,uy:dy/len,nx:nx,ny:ny});
+    if(len>longestEdge){longestEdge=len;longestIdx=i}
+  }
+  // Build openings: windows on every edge >2m, door on longest edge
+  const winH=Math.min(1.2,height*0.3), winSill=Math.max(0.8,height*0.35);
+  const doorH=Math.min(2.1,height*0.65), doorWide=1.0;
+  const openings=[];
+  for(let i=0;i<n;i++){openings[i]=[]}
+  for(let i=0;i<n;i++){
+    const e=edges[i];
+    if(e.len<2) continue;
+    const winCount=Math.min(3,Math.floor(e.len/2.5));
+    if(i===longestIdx){
+      // Door at center, plus windows around it
+      openings[i].push({t:0.5, width:doorWide, height:doorH, sillY:0, type:'door'});
+      if(winCount>=2){
+        openings[i].push({t:0.2, width:Math.min(0.9,e.len*0.15), height:winH, sillY:winSill, type:'window'});
+        openings[i].push({t:0.8, width:Math.min(0.9,e.len*0.15), height:winH, sillY:winSill, type:'window'});
+      }
+    }else{
+      for(let w=0;w<winCount;w++){
+        const t=(w+1)/(winCount+1);
+        openings[i].push({t:t, width:Math.min(0.9,e.len*0.15), height:winH, sillY:winSill, type:'window'});
+      }
+    }
+  }
+  // Wall material — solid color, double-sided
+  const wallMat=new THREE.MeshPhongMaterial({color:color,side:THREE.DoubleSide});
+  buildWallPanels(poly2D,edges,0,height,openings,wallMat,g,0.2,0,'F1');
+  // Interior ground floor
+  (function(){
+    const sh=new THREE.Shape();
+    sh.moveTo(poly2D[0][0],poly2D[0][1]);
+    for(let i=1;i<poly2D.length;i++)sh.lineTo(poly2D[i][0],poly2D[i][1]);
+    sh.closePath();
+    const fGeo=new THREE.ShapeGeometry(sh);
+    fGeo.rotateX(-Math.PI/2);
+    const fMat=new THREE.MeshStandardMaterial({color:0xE8DDD0,roughness:0.85,side:THREE.DoubleSide});
+    const fMesh=new THREE.Mesh(fGeo,fMat);
+    fMesh.position.y=0.02;
+    fMesh.receiveShadow=true;
+    g.add(fMesh);
+  })();
+  // Roof — pyramid/hip
+  const roofH=height*0.35;
+  const verts=[],indices=[];
+  verts.push(cent[0],height+roofH,-cent[1]);
+  for(let i=0;i<n;i++)verts.push(poly2D[i][0],height,-poly2D[i][1]);
   for(let i=0;i<n;i++){indices.push(0,i+1,(i+1)%n+1)}
-  // Bottom cap
   for(let i=1;i<n-1;i++){indices.push(1,i+1,i+2)}
   const roofGeo=new THREE.BufferGeometry();
   roofGeo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));
   roofGeo.setIndex(indices);roofGeo.computeVertexNormals();
-  const roofMesh=new THREE.Mesh(roofGeo,new THREE.MeshPhongMaterial({color:0x8B4513}));
+  const roofMesh=new THREE.Mesh(roofGeo,new THREE.MeshPhongMaterial({color:0x8B4513,side:THREE.DoubleSide}));
   roofMesh.castShadow=true;g.add(roofMesh);
-  // Windows — on edges longer than 2m
-  // Note: walls are extruded in XY then rotated so Y→-Z in 3D. So 2D point (px,py) → 3D (px, h, -py)
-  // Outward normal in 2D (nx,ny) → 3D (nx, 0, -ny). Window faces outward = rotation around Y.
-  const winMat=new THREE.MeshPhongMaterial({color:0x88CCFF,transparent:true,opacity:.6});
-  let longestEdge=0,longestIdx=0;
+  // Glass panes inside window openings
+  const winMat=makeGlassMaterial(false);
   for(let i=0;i<n;i++){
-    const a=poly2D[i],b=poly2D[(i+1)%n];
-    const edgeLen=Math.hypot(b[0]-a[0],b[1]-a[1]);
-    if(edgeLen>longestEdge){longestEdge=edgeLen;longestIdx=i}
-    if(edgeLen<2)continue;
-    const dx=b[0]-a[0],dy=b[1]-a[1],el=Math.hypot(dx,dy);
-    const nx2d=-dy/el,ny2d=dx/el; // outward normal in 2D
-    const faceAngle=Math.atan2(-ny2d,nx2d); // rotation.y to face outward in 3D (nx,0,-ny)
-    const winCount=Math.min(3,Math.floor(edgeLen/2.5));
-    for(let w=0;w<winCount;w++){
-      const t=(w+1)/(winCount+1);
-      const wx=a[0]+t*dx,wy=a[1]+t*dy;
-      const winGeo=new THREE.PlaneGeometry(Math.min(.8,edgeLen*.12),Math.min(1,height*.2));
-      const win=new THREE.Mesh(winGeo,winMat);
-      win.position.set(wx+nx2d*.05,height*.5,-wy-ny2d*.05);
-      win.rotation.y=faceAngle;
-      g.add(win);
+    const e=edges[i];
+    const ops=openings[i]||[];
+    const faceAngle=Math.atan2(e.nx,-e.ny);
+    for(let oi=0;oi<ops.length;oi++){
+      const op=ops[oi];
+      if(op.type!=='window') continue;
+      const wx=e.ax+op.t*e.dx, wy=e.ay+op.t*e.dy;
+      const pane=new THREE.Mesh(new THREE.PlaneGeometry(op.width*0.95,op.height*0.95),winMat);
+      pane.position.set(wx,op.sillY+op.height/2,-wy);
+      pane.rotation.y=faceAngle;
+      g.add(pane);
     }
   }
-  // Door on longest edge
-  const da=poly2D[longestIdx],db=poly2D[(longestIdx+1)%n];
-  const dmx=(da[0]+db[0])/2,dmy=(da[1]+db[1])/2;
-  const ddx=db[0]-da[0],ddy=db[1]-da[1],del=Math.hypot(ddx,ddy);
-  const dnx=-ddy/del,dny=ddx/del;
-  const doorAngle=Math.atan2(-dny,dnx);
-  const doorGeo=new THREE.PlaneGeometry(1,Math.min(2,height*.6));
-  const doorMesh=new THREE.Mesh(doorGeo,new THREE.MeshPhongMaterial({color:0x5D4037}));
-  doorMesh.position.set(dmx+dnx*.05,Math.min(1,height*.3),-dmy-dny*.05);
-  doorMesh.rotation.y=doorAngle;
-  g.add(doorMesh);
+  // Register footprint (single floor at y=0, no plinth)
+  (function(){
+    const wp=[]; for(let i=0;i<poly2D.length;i++)wp.push([poly2D[i][0], -poly2D[i][1]]);
+    villaFootprints.push({poly:wp, floorYs:[0.05]});
+  })();
+  // Hinged door on longest edge
+  (function(){
+    const e=edges[longestIdx];
+    const hingeT=0.5-(doorWide*0.5)/e.len;
+    const dHX=e.ax+hingeT*e.dx;
+    const dHY=e.ay+hingeT*e.dy;
+    const baseRot=Math.atan2(e.uy,e.ux); // pivot's local +X aligns with edge tangent (door sits in wall plane)
+    const swingSign=(((-e.uy)*(-e.nx)+(e.ux)*(-e.ny))<0)?-1:1;
+    const doorMat=new THREE.MeshPhongMaterial({color:0x5D4037});
+    const dPiv=buildHingedDoor(dHX,doorH/2,-dHY,doorWide,doorH,baseRot,swingSign,doorMat,g);
+    // Door collider
+    const dEndX=e.ax+(hingeT+doorWide/e.len)*e.dx;
+    const dEndY=e.ay+(hingeT+doorWide/e.len)*e.dy;
+    const dCol={ax:dHX,az:-dHY,bx:dEndX,bz:-dEndY,active:true,floor:'F1',yLow:0,yHigh:doorH,isDoor:true};
+    wallColliders.push(dCol);
+    dPiv.userData.collider=dCol;
+  })();
   return g;
 }
 // Modern villa builder for Optimum 1-4 modes — unified edge-based approach for all shapes
@@ -1242,7 +1636,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   var vsF2=VILLA_STYLES[STATE.villaStyleF2]||VILLA_STYLES.modern;
   var vs=vsF1; // use F1 style for non-wall elements (glass, railings, slab, door, etc.)
   function makeWallMat(style){
-    var props={color:style.wall,roughness:0.85,metalness:0.02};
+    var props={color:style.wall,roughness:0.85,metalness:0.02,side:THREE.DoubleSide};
     if(style.wallTexture){props.map=makeStoneWallTexture(style.stoneVariant||'honey');props.roughness=0.95;props.metalness=0.0}
     if(style.grayStoneTexture){props.map=makeGrayStoneTexture();props.roughness=0.95;props.metalness=0.0;props.color=0xFFFFFF}
     if(style.woodCladdingTexture){props.map=makeWoodCladdingTexture(style.woodVariant||'narrow');props.roughness=0.75;props.metalness=0.0;props.color=0xFFFFFF}
@@ -1250,16 +1644,17 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   }
   var matConcrete=makeWallMat(vsF1);
   var matConcreteF2=makeWallMat(vsF2);
-  var matConcreteSlab=new THREE.MeshStandardMaterial({color:vs.slab,roughness:0.8,metalness:0.03});
+  var matConcreteSlab=new THREE.MeshStandardMaterial({color:vs.slab,roughness:0.8,metalness:0.03,side:THREE.DoubleSide});
+  var matInteriorFloor=new THREE.MeshStandardMaterial({color:0xE8DDD0,roughness:0.85,metalness:0.0,side:THREE.DoubleSide});
   // Roof terrace surface — user-selectable
   var roofCfg=ROOF_STYLES[STATE.villaStyleRoof]||ROOF_STYLES.beton;
   var matRoofSlab=new THREE.MeshStandardMaterial({color:roofCfg.color,roughness:roofCfg.roughness,metalness:roofCfg.metalness});
   var matWood=new THREE.MeshStandardMaterial({color:vs.wood,roughness:0.65});
   var matWoodDark=new THREE.MeshStandardMaterial({color:vs.woodDark,roughness:0.6});
-  // Dark windows — permanent panjur (rolling shutter) look
-  var matGlass=new THREE.MeshStandardMaterial({map:makePanjurTexture(),roughness:0.6,metalness:0.3,side:THREE.DoubleSide});
-  // Lit windows — opaque warm glow
-  var matGlassLit=new THREE.MeshPhysicalMaterial({color:vs.glassLit,roughness:0.2,metalness:0.1,emissive:vs.glassEmit,emissiveIntensity:0.55,clearcoat:0.3,clearcoatRoughness:0.15,side:THREE.DoubleSide});
+  // Dark windows — transmissive glass (light + view passes through)
+  var matGlass=makeGlassMaterial(false);
+  // Lit windows — transmissive glass with warm emissive glow
+  var matGlassLit=makeGlassMaterial(true);
   var matRailing=new THREE.MeshStandardMaterial({color:vs.railing,roughness:0.25,metalness:0.85});
   var matFrame=new THREE.MeshStandardMaterial({color:vs.frame,roughness:0.3,metalness:0.75});
   var matDoor=new THREE.MeshStandardMaterial({color:vs.door,roughness:0.55});
@@ -1274,10 +1669,32 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   var W=maxU-minU,D=maxV-minV;
   var F1=height*0.5,F2=height-F1,SLAB2=0.22,railH=1.05,railTh=0.035;
   var f2base=F1+SLAB2,roofYv=f2base+F2+SLAB2,glassInset=0.08;
+  var SUB_H=0.8; // subasman lift (entire group shifted up by this at the end)
   function mvExtrudePoly(polyArr,yBase,h2,mat){var pn=polyArr.length;var sh=new THREE.Shape();sh.moveTo(polyArr[0][0],polyArr[0][1]);for(var si=1;si<pn;si++)sh.lineTo(polyArr[si][0],polyArr[si][1]);sh.closePath();var geo=new THREE.ExtrudeGeometry(sh,{depth:h2,bevelEnabled:false});geo.rotateX(-Math.PI/2);geo.translate(0,yBase,0);var m=new THREE.Mesh(geo,mat);m.castShadow=true;m.receiveShadow=true;g.add(m)}
-  function mvPolySlab(polyArr,yPos,h2,mat){var pn=polyArr.length;var sh=new THREE.Shape();sh.moveTo(polyArr[0][0],polyArr[0][1]);for(var si=1;si<pn;si++)sh.lineTo(polyArr[si][0],polyArr[si][1]);sh.closePath();var geo=new THREE.ExtrudeGeometry(sh,{depth:h2,bevelEnabled:false});geo.rotateX(-Math.PI/2);geo.translate(0,yPos,0);var m=new THREE.Mesh(geo,mat);m.receiveShadow=true;g.add(m)}
-  // Floor 1 walls
-  mvExtrudePoly(poly2D,0,F1,matConcrete);
+  function mvPolySlab(polyArr,yPos,h2,mat,holes){
+    var pn=polyArr.length;
+    var sh=new THREE.Shape();
+    sh.moveTo(polyArr[0][0],polyArr[0][1]);
+    for(var si=1;si<pn;si++)sh.lineTo(polyArr[si][0],polyArr[si][1]);
+    sh.closePath();
+    if(holes){
+      for(var hi=0;hi<holes.length;hi++){
+        var hp=holes[hi];
+        var hpath=new THREE.Path();
+        hpath.moveTo(hp[0][0],hp[0][1]);
+        for(var hj=1;hj<hp.length;hj++)hpath.lineTo(hp[hj][0],hp[hj][1]);
+        hpath.closePath();
+        sh.holes.push(hpath);
+      }
+    }
+    var geo=new THREE.ExtrudeGeometry(sh,{depth:h2,bevelEnabled:false});
+    geo.rotateX(-Math.PI/2);
+    geo.translate(0,yPos,0);
+    var m=new THREE.Mesh(geo,mat);
+    m.castShadow=true;    // slabs (inter-floor, roof) must block direct sunlight from above
+    m.receiveShadow=true;
+    g.add(m);
+  }
   // Edge info
   var edges=[],longIdx=0,longLen=0;
   for(var ei=0;ei<n;ei++){var ea=poly2D[ei],eb=poly2D[(ei+1)%n];var edx2=eb[0]-ea[0],edy2=eb[1]-ea[1],eLen2=Math.hypot(edx2,edy2);var eAngle=Math.atan2(edy2,edx2);var nx2=-edy2/eLen2,ny2=edx2/eLen2;var emx2=(ea[0]+eb[0])/2,emy2=(ea[1]+eb[1])/2;if((emx2+nx2-cent[0])*(emx2+nx2-cent[0])+(emy2+ny2-cent[1])*(emy2+ny2-cent[1])<(emx2-nx2-cent[0])*(emx2-nx2-cent[0])+(emy2-ny2-cent[1])*(emy2-ny2-cent[1])){nx2=-nx2;ny2=-ny2}edges.push({ax:ea[0],ay:ea[1],bx:eb[0],by:eb[1],dx:edx2,dy:edy2,len:eLen2,angle:eAngle,ux:edx2/eLen2,uy:edy2/eLen2,nx:nx2,ny:ny2});if(eLen2>longLen){longLen=eLen2;longIdx=ei}}
@@ -1449,16 +1866,270 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     }
   }
 
+  // === Determine door placement on front edge — needed early to build wall openings ===
+  var doorT=0.65, bigT=0.3, smallT=0.85;
+  if(gardenEdgeIdx>=0){
+    var prevLongE=(longIdx-1+n)%n;
+    if(prevLongE===gardenEdgeIdx){doorT=0.35; bigT=0.7; smallT=0.15;}
+  }
+
+  // === Build openings (windows + doors) for F1 and F2 walls ===
+  // Realistic Turkish residential: sill 90cm above floor, window 150cm tall (top at 240cm)
+  var g1SillY=0.90, g1H2=Math.min(1.50,Math.max(0.9,F1-1.30)), g1Center=g1SillY+g1H2/2;
+  var g2SillY=0.90, g2H2=Math.min(1.40,Math.max(0.9,F2-1.30)), g2Center=g2SillY+g2H2/2;
+  var doorH3=Math.min(2.20,F1-0.80); // standard residential door 2.10-2.20m
+  var doorGlassH=Math.min(2.20,F2-0.80);
+
+  var openingsF1=[];
+  for(var foi=0;foi<n;foi++){
+    openingsF1[foi]=[];
+    var fe=edges[foi]; if(fe.len<2) continue;
+    if(foi===longIdx){
+      // Front edge: bigger window + door + smaller window
+      openingsF1[foi].push({t:bigT, width:fe.len*0.5, height:g1H2, sillY:g1SillY, type:'window'});
+      openingsF1[foi].push({t:doorT, width:1.4, height:doorH3, sillY:0, type:'door'});
+      openingsF1[foi].push({t:smallT, width:fe.len*0.2, height:g1H2, sillY:g1SillY, type:'window'});
+    }else{
+      openingsF1[foi].push({t:0.5, width:fe.len*0.55, height:g1H2, sillY:g1SillY, type:'window'});
+    }
+  }
+
+  var openingsF2=[];
+  for(var foi2=0;foi2<f2n;foi2++){
+    openingsF2[foi2]=[];
+    var fe2=f2edges[foi2]; if(fe2.len<2) continue;
+    if(foi2===f2longIdx){
+      openingsF2[foi2].push({t:0.2, width:fe2.len*0.22, height:g2H2, sillY:g2SillY, type:'window'});
+      openingsF2[foi2].push({t:0.6, width:fe2.len*0.3, height:doorGlassH, sillY:0.05, type:'door'});
+    }else{
+      openingsF2[foi2].push({t:0.5, width:fe2.len*0.55, height:g2H2, sillY:g2SillY, type:'window'});
+    }
+  }
+
+  // === Build hollow walls with actual openings ===
+  buildWallPanels(poly2D, edges, 0, F1, openingsF1, matConcrete, g, 0.22, SUB_H, 'F1');
+
+  // === Interior ground floor (visible from inside, no hole — stairs sit on it) ===
+  (function addGroundFloor(){
+    var sh=new THREE.Shape();
+    sh.moveTo(poly2D[0][0],poly2D[0][1]);
+    for(var si=1;si<poly2D.length;si++)sh.lineTo(poly2D[si][0],poly2D[si][1]);
+    sh.closePath();
+    var fGeo=new THREE.ShapeGeometry(sh);
+    fGeo.rotateX(-Math.PI/2);
+    var fMesh=new THREE.Mesh(fGeo,matInteriorFloor);
+    fMesh.position.y=0.02;
+    fMesh.receiveShadow=true;
+    g.add(fMesh);
+  })();
+
+  // === Compute stair placement (against a non-cantilever wall, adjacent on both floors) ===
+  var stairW=1.0;
+  var stairPlacement=null;
+  var stairHoleRect2D=null;
+  (function computeStair(){
+    var stepCount=Math.max(4,Math.round((F1+SLAB2)/0.175));
+    var f1Steps=Math.ceil(stepCount/2);
+    var stairLen=f1Steps*0.28+0.68;
+    var perpMarginAdj=stairW/2+0.11;  // flight 1 outer edge flush to building wall inner face
+    var alongMargin=0.40;             // small offset from corner
+
+    function inside(x,y){return pointInPoly2D(x,y,poly2D)}
+    // Check if the U-stair footprint fits inside the polygon.
+    // Flight direction: (fdX, fdY). Perp direction: INWARD (toward centroid) = (-enx, -eny).
+    // This is independent of flight direction; stair stays on the inside side of the wall.
+    function fitsAt(sx,sy,fdX,fdY,enx,eny){
+      var pdX=-enx, pdY=-eny;
+      var pts=[
+        [-0.1,-stairW/2-0.05],[stairLen+0.1,-stairW/2-0.05],
+        [-0.1,1.5*stairW+0.05],[stairLen+0.1,1.5*stairW+0.05],
+        [stairLen*0.5,0],[stairLen*0.5,stairW],
+        [stairLen,stairW*0.5],[0,stairW*0.5]
+      ];
+      for(var k=0;k<pts.length;k++){
+        var px=sx+pts[k][0]*fdX+pts[k][1]*pdX;
+        var py=sy+pts[k][0]*fdY+pts[k][1]*pdY;
+        if(!inside(px,py)) return false;
+      }
+      return true;
+    }
+
+    // Rank edges: prefer non-cantilever, prefer NOT the front edge, prefer longer
+    var candidates=[];
+    for(var ei2=0;ei2<n;ei2++){
+      if(edges[ei2].len<stairLen+0.7) continue;
+      var isCant=(isRoad.length>0 && isRoad[ei2]);
+      var score=0;
+      if(!isCant) score+=10000;
+      if(ei2!==longIdx) score+=100;
+      score+=edges[ei2].len;
+      candidates.push({idx:ei2,score:score});
+    }
+    candidates.sort(function(a,b){return b.score-a.score});
+
+    var sx,sy,fdX2D,fdY2D,stairFlipPerp=false, stairEdgeIdx=-1, found=false;
+    for(var ci=0;ci<candidates.length && !found;ci++){
+      var e0=edges[candidates[ci].idx];
+      // Preferred: start at the edge's ax vertex, flight runs along the edge in +e.u direction.
+      // With flipPerp=true the U-turn goes inward (perp toward centroid). This puts the stair
+      // ENTRY on the opposite side of the wall compared to the previous layout.
+      var sxB=e0.ax+e0.ux*alongMargin+(-e0.nx)*perpMarginAdj;
+      var syB=e0.ay+e0.uy*alongMargin+(-e0.ny)*perpMarginAdj;
+      if(fitsAt(sxB,syB,e0.ux,e0.uy,e0.nx,e0.ny)){
+        sx=sxB; sy=syB; fdX2D=e0.ux; fdY2D=e0.uy; stairFlipPerp=true; stairEdgeIdx=candidates[ci].idx; found=true; break;
+      }
+      // Fallback: original orientation (start at bx, flight -e.u, perp default-right = inward).
+      var sxA=e0.bx+(-e0.ux)*alongMargin+(-e0.nx)*perpMarginAdj;
+      var syA=e0.by+(-e0.uy)*alongMargin+(-e0.ny)*perpMarginAdj;
+      if(fitsAt(sxA,syA,-e0.ux,-e0.uy,e0.nx,e0.ny)){
+        sx=sxA; sy=syA; fdX2D=-e0.ux; fdY2D=-e0.uy; stairFlipPerp=false; stairEdgeIdx=candidates[ci].idx; found=true; break;
+      }
+    }
+
+    // Fallback: OBB-aligned at centroid (old behavior)
+    if(!found){
+      sx=cent[0]; sy=cent[1];
+      fdX2D=dirX; fdY2D=dirY;
+      stairFlipPerp=false;
+    }
+
+    // Compute the actual stair footprint extent — must include both flights and the landing.
+    // Mirror the constants used by buildUStair so hole matches the real stair.
+    var f2StepsCalc=stepCount-f1Steps;
+    var f1RunCalc=f1Steps*0.28;
+    var f2RunCalc=f2StepsCalc*0.28;
+    var landingDepthCalc=0.28+0.40;
+    var f2StartDirCalc=f1RunCalc+landingDepthCalc-0.28*1.5;
+    // Swapped layout: landing center = (bottom flight last-step center dir)/2
+    var landingCenterCalc=(f2StartDirCalc-(f2StepsCalc-0.5)*0.28)/2;
+    var landingMinDir=landingCenterCalc-landingDepthCalc/2;
+    var landingMaxDir=landingCenterCalc+landingDepthCalc/2;
+    var stairDirMin=Math.min(0,f2StartDirCalc-f2RunCalc,landingMinDir);
+    // Far edge: the UPPER flight (which climbs to the slab) exits at f1RunCalc. The lower flight's
+    // entry step reaches further (f2StartDirCalc) but sits ~a full storey below the slab, so the
+    // slab never needs to open above it. Driving the hole out to f2StartDirCalc would leave an
+    // empty gap (~one tread) directly in front of the top step — so clamp the far edge to f1RunCalc.
+    var stairDirMax=Math.max(f1RunCalc,landingMaxDir);
+    // Tight margins (2cm) so the hole matches the stair footprint almost exactly.
+    var holeMargin=0.02;
+    var holeDirMin=stairDirMin-holeMargin;
+    var holeDirMax=stairDirMax+holeMargin;
+    // Perp range depends on U-turn direction: default-right → [-w/2, +3w/2], flipped-left → [-3w/2, +w/2]
+    var holePerpMin=stairFlipPerp?-1.5*stairW-holeMargin:-stairW/2-holeMargin;
+    var holePerpMax=stairFlipPerp?stairW/2+holeMargin:1.5*stairW+holeMargin;
+    stairHoleRect2D=makeStairHoleRect2D(sx,sy,fdX2D,fdY2D,holeDirMin,holeDirMax,holePerpMin,holePerpMax);
+    stairPlacement={sx2D:sx,sy2D:sy,fdX2D:fdX2D,fdY2D:fdY2D,flipPerp:stairFlipPerp,swapYHalves:true,edgeIdx:stairEdgeIdx,fits:found};
+  })();
+
   // Floor 2 walls + slabs (use f2poly for cantilever effect; mid-slab creates visible overhang ceiling)
-  mvPolySlab(f2poly,F1,SLAB2,matConcreteSlab);
-  mvExtrudePoly(f2poly,f2base,F2,matConcreteF2);
-  mvPolySlab(f2poly,f2base+F2,SLAB2,matRoofSlab);
+  mvPolySlab(f2poly,F1,SLAB2,matConcreteSlab,stairHoleRect2D?[stairHoleRect2D]:null);
+  buildWallPanels(f2poly, f2edges, f2base, F2, openingsF2, matConcreteF2, g, 0.22, SUB_H, 'F2');
+
+  // === Interior F2 floor (top of inter-floor slab, with stair hole) ===
+  (function addF2Floor(){
+    var sh=new THREE.Shape();
+    sh.moveTo(f2poly[0][0],f2poly[0][1]);
+    for(var si=1;si<f2poly.length;si++)sh.lineTo(f2poly[si][0],f2poly[si][1]);
+    sh.closePath();
+    if(stairHoleRect2D){
+      var hp=new THREE.Path();
+      hp.moveTo(stairHoleRect2D[0][0],stairHoleRect2D[0][1]);
+      for(var hj=1;hj<stairHoleRect2D.length;hj++) hp.lineTo(stairHoleRect2D[hj][0],stairHoleRect2D[hj][1]);
+      hp.closePath();
+      sh.holes.push(hp);
+    }
+    var fGeo=new THREE.ShapeGeometry(sh);
+    fGeo.rotateX(-Math.PI/2);
+    var fMesh=new THREE.Mesh(fGeo,matInteriorFloor);
+    fMesh.position.y=f2base+0.02;
+    fMesh.castShadow=true;    // F2 floor acts as F1 ceiling — blocks light from above
+    fMesh.receiveShadow=true;
+    g.add(fMesh);
+  })();
+
+  // === Register villa footprint for FP floor detection ===
+  (function registerFootprint(){
+    var poly=[]; for(var i=0;i<poly2D.length;i++) poly.push([poly2D[i][0], -poly2D[i][1]]);
+    var poly2=[]; for(var i=0;i<f2poly.length;i++) poly2.push([f2poly[i][0], -f2poly[i][1]]);
+    villaFootprints.push({
+      poly:poly,
+      polyF2:poly2,
+      floorYs:[SUB_H+0.05, SUB_H+f2base+0.05, SUB_H+roofYv+0.003]
+    });
+  })();
+
+  // === Build stair meshes (U-shape, both flights stacked at same XZ) ===
+  (function addStairs(){
+    if(!stairPlacement) return;
+    var startWX=stairPlacement.sx2D;
+    var startWZ=-stairPlacement.sy2D;
+    var f1DirX=stairPlacement.fdX2D;
+    var f1DirZ=-stairPlacement.fdY2D;
+    var flipPerp=stairPlacement.flipPerp;
+    // swapYHalves=true → first step is at the FAR end of the stair wall (not next to
+    // the perpendicular small edge/corner); top landing ends near the small edge.
+    buildUStair(startWX, startWZ, F1+SLAB2, f1DirX, f1DirZ, stairW, 0, SUB_H, matConcreteSlab, g, 'F1toF2', flipPerp, true);
+    buildUStair(startWX, startWZ, F2+SLAB2, f1DirX, f1DirZ, stairW, f2base, SUB_H, matConcreteSlab, g, 'F2toRoof', flipPerp, true);
+    // === Stairwell shaft walls (3 sides — entry side open) ===
+    // Real stairwell: walls enclose the stairs from F1 floor up to roof slab.
+    // Open side = the dirMin side (where flight 1 starts and flight 2 ends).
+    if(stairHoleRect2D){
+      var c=stairHoleRect2D;
+      // Hole centroid (for inward shift to avoid z-fighting with slabs)
+      var hcX=(c[0][0]+c[1][0]+c[2][0]+c[3][0])/4;
+      var hcY=(c[0][1]+c[1][1]+c[2][1]+c[3][1])/4;
+      var swThick=0.15;
+      // F1 stays open (stair is a sculptural feature in the open living space).
+      // Walls exist only on F2, from F2 floor up to the roof-slab bottom.
+      var swBottom=f2base;            // local y of wall bottom (= F2 walking surface)
+      var swHeight=F2;                // wall height on F2
+      function addStairwellWall(x1,y1,x2,y2){
+        var len=Math.hypot(x2-x1,y2-y1);
+        if(len<0.1) return;
+        var midX=(x1+x2)/2, midY=(y1+y2)/2;
+        // Shift inward (toward hole center) by swThick/2 so wall sits inside the hole boundary
+        var nx=hcX-midX, ny=hcY-midY;
+        var nL=Math.hypot(nx,ny); if(nL<1e-6){nx=1;ny=0;nL=1} nx/=nL; ny/=nL;
+        midX+=swThick*0.5*nx;
+        midY+=swThick*0.5*ny;
+        var ang=Math.atan2(y2-y1,x2-x1);
+        var wall=new THREE.Mesh(new THREE.BoxGeometry(len,swHeight,swThick),matConcrete);
+        wall.position.set(midX,swBottom+swHeight/2,-midY);
+        wall.rotation.y=ang;
+        wall.castShadow=true; wall.receiveShadow=true;
+        g.add(wall);
+        // Collider only at F2 level — F1 stays fully walkable
+        wallColliders.push({ax:x1,az:-y1,bx:x2,bz:-y2,active:true,floor:'stairwell',yLow:SUB_H+swBottom,yHigh:SUB_H+swBottom+swHeight});
+      }
+      // Skip c[0]-c[1] (perpMin = adjacent to the building wall, redundant).
+      // Skip the entry side (depends on swapYHalves):
+      //   default (swapYHalves=false): entry is at dirMin  (skip c[3]-c[0])  → add dirMax + perpMax walls.
+      //   swapped (swapYHalves=true):  entry is at dirMax  (skip c[1]-c[2])  → add dirMin + perpMax walls.
+      var stairSwapped=stairPlacement && stairPlacement.swapYHalves;
+      if(stairSwapped){
+        addStairwellWall(c[3][0],c[3][1],c[0][0],c[0][1]); // dirMin side
+        addStairwellWall(c[2][0],c[2][1],c[3][0],c[3][1]); // perpMax side
+      }else{
+        addStairwellWall(c[1][0],c[1][1],c[2][0],c[2][1]); // dirMax side
+        addStairwellWall(c[2][0],c[2][1],c[3][0],c[3][1]); // perpMax side
+      }
+    }
+  })();
+
+  mvPolySlab(f2poly,f2base+F2,SLAB2,matRoofSlab,stairHoleRect2D?[stairHoleRect2D]:null);
   // Rooftop ceramic tile surface — 60x60cm tiles, tinted with the selected roof style color
   (function addRooftopTiles(){
     var sh=new THREE.Shape();
     sh.moveTo(f2poly[0][0],f2poly[0][1]);
     for(var si=1;si<f2poly.length;si++)sh.lineTo(f2poly[si][0],f2poly[si][1]);
     sh.closePath();
+    if(stairHoleRect2D){
+      var hp=new THREE.Path();
+      hp.moveTo(stairHoleRect2D[0][0],stairHoleRect2D[0][1]);
+      for(var hj=1;hj<stairHoleRect2D.length;hj++) hp.lineTo(stairHoleRect2D[hj][0],stairHoleRect2D[hj][1]);
+      hp.closePath();
+      sh.holes.push(hp);
+    }
     var tileGeo=new THREE.ShapeGeometry(sh);
     tileGeo.rotateX(-Math.PI/2);
     // Override UVs: either world-aligned (angled on rotated villas) or villa-aligned (tiles parallel to walls)
@@ -1492,24 +2163,14 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     });
     var tileMesh=new THREE.Mesh(tileGeo,tileMat);
     tileMesh.position.y=f2base+F2+SLAB2+0.003; // sit just above the roof slab
+    tileMesh.castShadow=true;    // rooftop tiles block sunlight from above
     tileMesh.receiveShadow=true;
     g.add(tileMesh);
   })();
 
-  // Determine door placement on front edge — shifted toward garden (but not at the corner)
-  // Default: garden at t=1 side (higher t) → door at t=0.65, big window left, small window right
-  var doorT=0.65, bigT=0.3, smallT=0.85;
-  if(gardenEdgeIdx>=0){
-    var prevLongE=(longIdx-1+n)%n, nextLongE=(longIdx+1)%n;
-    if(prevLongE===gardenEdgeIdx){
-      // Garden edge adjacent at t=0 side → mirror: door toward t=0
-      doorT=0.35; bigT=0.7; smallT=0.15;
-    }
-  }
-
   // Floor 1 facade: glass, mullions, front door (uses poly2D edges)
   for(ei=0;ei<n;ei++){var e=edges[ei];if(e.len<2)continue;var faceAngle=Math.atan2(e.nx,-e.ny);var isFront=(ei===longIdx);
-    var g1H2=F1*0.75,gMat=isFront?matGlassLit:matGlass,gOff=0.06;
+    var gMat=isFront?matGlassLit:matGlass,gOff=0.06;
 
     if(isFront){
       // === FRONT EDGE: bigger window + door (shifted toward garden) + smaller window ===
@@ -1517,7 +2178,8 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       var bigW=e.len*0.5;
       var bgx=e.ax+bigT*e.dx+e.nx*gOff, bgz=e.ay+bigT*e.dy+e.ny*gOff;
       var bigGlass=new THREE.Mesh(new THREE.PlaneGeometry(bigW,g1H2),gMat);
-      bigGlass.position.set(bgx,F1*0.43,-bgz);bigGlass.rotation.y=faceAngle;g.add(bigGlass);
+      bigGlass.position.set(bgx,g1Center,-bgz);bigGlass.rotation.y=faceAngle;g.add(bigGlass);
+      registerWindowPane(bigGlass,e,bigT,bigW,g1Center,g1H2,faceAngle,gOff,SUB_H,'F1');
       // Bigger window vertical mullions
       var bigMC=Math.max(2,Math.round(bigW/2));
       for(var bmi=0;bmi<bigMC;bmi++){
@@ -1526,66 +2188,87 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
         var bmmx=e.ax+bmtx*e.dx+e.nx*(gOff+0.01);
         var bmmz=e.ay+bmtx*e.dy+e.ny*(gOff+0.01);
         var bmv=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);
-        bmv.position.set(bmmx,F1*0.43,-bmmz);bmv.rotation.y=faceAngle;g.add(bmv);
+        bmv.position.set(bmmx,g1Center,-bmmz);bmv.rotation.y=faceAngle;g.add(bmv);
       }
       // Bigger window horizontal mullion
       var bhx=e.ax+bigT*e.dx+e.nx*(gOff+0.01), bhz=e.ay+bigT*e.dy+e.ny*(gOff+0.01);
       var bhm=new THREE.Mesh(new THREE.PlaneGeometry(bigW,0.05),matFrame);
-      bhm.position.set(bhx,F1*0.6,-bhz);bhm.rotation.y=faceAngle;g.add(bhm);
+      bhm.position.set(bhx,g1Center+g1H2*0.15,-bhz);bhm.rotation.y=faceAngle;g.add(bhm);
 
       // NEW smaller window on the other side of the door (toward garden)
       var smallW=e.len*0.2;
       var sgx=e.ax+smallT*e.dx+e.nx*gOff, sgz=e.ay+smallT*e.dy+e.ny*gOff;
       var smallGlass=new THREE.Mesh(new THREE.PlaneGeometry(smallW,g1H2),gMat);
-      smallGlass.position.set(sgx,F1*0.43,-sgz);smallGlass.rotation.y=faceAngle;g.add(smallGlass);
+      smallGlass.position.set(sgx,g1Center,-sgz);smallGlass.rotation.y=faceAngle;g.add(smallGlass);
+      registerWindowPane(smallGlass,e,smallT,smallW,g1Center,g1H2,faceAngle,gOff,SUB_H,'F1');
       // Smaller window vertical mullion (1)
       var smv=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);
       var smvX=e.ax+smallT*e.dx+e.nx*(gOff+0.01), smvZ=e.ay+smallT*e.dy+e.ny*(gOff+0.01);
-      smv.position.set(smvX,F1*0.43,-smvZ);smv.rotation.y=faceAngle;g.add(smv);
+      smv.position.set(smvX,g1Center,-smvZ);smv.rotation.y=faceAngle;g.add(smv);
       // Smaller window horizontal mullion
       var shm=new THREE.Mesh(new THREE.PlaneGeometry(smallW,0.05),matFrame);
-      shm.position.set(smvX,F1*0.6,-smvZ);shm.rotation.y=faceAngle;g.add(shm);
+      shm.position.set(smvX,g1Center+g1H2*0.15,-smvZ);shm.rotation.y=faceAngle;g.add(shm);
 
-      // Front door — at doorT (toward middle, closer to garden), not at the corner
-      var doorH3=Math.min(2.4,F1*0.75);
-      var doorX=e.ax+doorT*e.dx+e.nx*0.06, doorZ=e.ay+doorT*e.dy+e.ny*0.06;
-      var doorMesh=new THREE.Mesh(new THREE.PlaneGeometry(1.2,doorH3),matDoor);
-      doorMesh.position.set(doorX,doorH3/2,-doorZ);doorMesh.rotation.y=faceAngle;g.add(doorMesh);
-      var dfx=e.ax+doorT*e.dx+e.nx*0.055, dfz=e.ay+doorT*e.dy+e.ny*0.055;
-      var df1=new THREE.Mesh(new THREE.PlaneGeometry(1.35,0.08),matFrame);
+      // Front door — hinged pivot for opening/closing in FP mode
+      var doorWide=1.2;
+      // Hinge at the t-direction-start side of the door so it swings inward along edge tangent
+      var hingeT=doorT-(doorWide*0.5)/e.len;
+      var doorHX=e.ax+hingeT*e.dx;
+      var doorHY=e.ay+hingeT*e.dy;
+      // baseRot makes the pivot's local +X align with the edge tangent in world (door sits flat in wall).
+      // Pivot rotation.y = θ rotates local +X to world (cos θ, 0, -sin θ).
+      // World edge tangent = (e.ux, 0, -e.uy). So cos θ = e.ux, sin θ = e.uy → θ = atan2(e.uy, e.ux) = e.angle.
+      var baseRot=Math.atan2(e.uy,e.ux);
+      // Door opens by ±90°. After +π/2 from baseRot, free-end direction in 2D = (-e.uy, e.ux).
+      // For inward swing, dot with inward normal (-e.nx, -e.ny) > 0.
+      var swingSign=1;
+      if(((-e.uy)*(-e.nx)+(e.ux)*(-e.ny))<0) swingSign=-1;
+      var doorPiv=buildHingedDoor(doorHX, doorH3/2, -doorHY, doorWide, doorH3, baseRot, swingSign, matDoor, g);
+      // Door collider: spans the door opening (deactivated when door opens, allowing passage)
+      var doorEndX2D=e.ax+(hingeT+doorWide/e.len)*e.dx;
+      var doorEndY2D=e.ay+(hingeT+doorWide/e.len)*e.dy;
+      var doorCol={ax:doorHX,az:-doorHY,bx:doorEndX2D,bz:-doorEndY2D,active:true,floor:'F1',yLow:SUB_H,yHigh:SUB_H+doorH3,isDoor:true};
+      wallColliders.push(doorCol);
+      doorPiv.userData.collider=doorCol;
+      // Door frame header (above door)
+      var dfx=e.ax+doorT*e.dx+e.nx*0.0, dfz=e.ay+doorT*e.dy+e.ny*0.0;
+      var df1=new THREE.Mesh(new THREE.PlaneGeometry(1.45,0.08),matFrame);
       df1.position.set(dfx,doorH3+0.04,-dfz);df1.rotation.y=faceAngle;g.add(df1);
     }else{
       // === NON-FRONT EDGES: single centered window (existing behavior) ===
       var glassW=e.len*0.55;
       var gcx=e.ax+0.5*e.dx+e.nx*gOff,gcz=e.ay+0.5*e.dy+e.ny*gOff;
       var gm1=new THREE.Mesh(new THREE.PlaneGeometry(glassW,g1H2),gMat);
-      gm1.position.set(gcx,F1*0.43,-gcz);gm1.rotation.y=faceAngle;g.add(gm1);
+      gm1.position.set(gcx,g1Center,-gcz);gm1.rotation.y=faceAngle;g.add(gm1);
+      registerWindowPane(gm1,e,0.5,glassW,g1Center,g1H2,faceAngle,gOff,SUB_H,'F1');
       var mullionCount=Math.max(2,Math.round(glassW/2));
       for(var mi2=0;mi2<mullionCount;mi2++){
         var mt=(mi2+1)/(mullionCount+1);
         var mmx=e.ax+(0.5-glassW/e.len*0.5+mt*glassW/e.len)*e.dx+e.nx*(gOff+0.01);
         var mmz=e.ay+(0.5-glassW/e.len*0.5+mt*glassW/e.len)*e.dy+e.ny*(gOff+0.01);
         var mv1=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);
-        mv1.position.set(mmx,F1*0.43,-mmz);mv1.rotation.y=faceAngle;g.add(mv1);
+        mv1.position.set(mmx,g1Center,-mmz);mv1.rotation.y=faceAngle;g.add(mv1);
       }
       var hmx=e.ax+0.5*e.dx+e.nx*(gOff+0.01),hmz=e.ay+0.5*e.dy+e.ny*(gOff+0.01);
       var hm1=new THREE.Mesh(new THREE.PlaneGeometry(glassW,0.05),matFrame);
-      hm1.position.set(hmx,F1*0.6,-hmz);hm1.rotation.y=faceAngle;g.add(hm1);
+      hm1.position.set(hmx,g1Center+g1H2*0.15,-hmz);hm1.rotation.y=faceAngle;g.add(hm1);
     }
   }
 
   // Floor 2 facade + balcony (uses f2edges — extended cantilever polygon for pentagon)
   for(var f2ei=0;f2ei<f2n;f2ei++){var e=f2edges[f2ei];if(e.len<2)continue;var faceAngle=Math.atan2(e.nx,-e.ny);var isFront=(f2ei===f2longIdx);
-    var g2H2=F2*0.8,gMat=isFront?matGlassLit:matGlass,gOff=0.06;
+    var gMat=isFront?matGlassLit:matGlass,gOff=0.06;
     // Floor 2 glass — smaller + shifted on front edge (to make room for balcony glass door)
     var g2W=isFront?e.len*0.22:e.len*0.55;
     var g2T=isFront?0.2:0.5;
     var g2cx=e.ax+g2T*e.dx+e.nx*gOff, g2cz=e.ay+g2T*e.dy+e.ny*gOff;
-    var gm2=new THREE.Mesh(new THREE.PlaneGeometry(g2W,g2H2),gMat);gm2.position.set(g2cx,f2base+F2*0.45,-g2cz);gm2.rotation.y=faceAngle;g.add(gm2);
+    var f2WindowCenter=f2base+g2Center;
+    var gm2=new THREE.Mesh(new THREE.PlaneGeometry(g2W,g2H2),gMat);gm2.position.set(g2cx,f2WindowCenter,-g2cz);gm2.rotation.y=faceAngle;g.add(gm2);
+    registerWindowPane(gm2,e,g2T,g2W,f2WindowCenter,g2H2,faceAngle,gOff,SUB_H,'F2');
     // Floor 2 mullions
     var mullionCountF2=Math.max(2,Math.round(g2W/2));
     for(var mi3=0;mi3<mullionCountF2;mi3++){var mt2=(mi3+1)/(mullionCountF2+1);var m2x=e.ax+(g2T-g2W/e.len*0.5+mt2*g2W/e.len)*e.dx+e.nx*(gOff+0.01);var m2z=e.ay+(g2T-g2W/e.len*0.5+mt2*g2W/e.len)*e.dy+e.ny*(gOff+0.01);
-      var mv2=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g2H2),matFrame);mv2.position.set(m2x,f2base+F2*0.45,-m2z);mv2.rotation.y=faceAngle;g.add(mv2)}
+      var mv2=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g2H2),matFrame);mv2.position.set(m2x,f2WindowCenter,-m2z);mv2.rotation.y=faceAngle;g.add(mv2)}
     // Balcony glass door + balcony slab + railings on floor 2 front edge
     if(isFront){
       var doorGlassW=e.len*0.3,doorGlassH=F2*0.9;var dgx=e.ax+0.6*e.dx+e.nx*(gOff+0.01),dgz=e.ay+0.6*e.dy+e.ny*(gOff+0.01);
@@ -1597,7 +2280,17 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       for(var bri=0;bri<=4;bri++){var bt2=(bri/4-0.5)*balcW2;var bpx=bFx+bt2*e.ux,bpz=bFz+bt2*e.uy;var bp=new THREE.Mesh(new THREE.BoxGeometry(railTh,bRailH,railTh),matRailing);bp.position.set(bpx,f2base+bRailH/2,-bpz);g.add(bp)}
       var bTopR=new THREE.Mesh(new THREE.BoxGeometry(balcW2,railTh,railTh),matRailing);bTopR.position.set(bFx,f2base+bRailH,-bFz);bTopR.rotation.y=e.angle;g.add(bTopR);
       var bMidR=new THREE.Mesh(new THREE.BoxGeometry(balcW2,railTh,railTh),matRailing);bMidR.position.set(bFx,f2base+bRailH*0.5,-bFz);bMidR.rotation.y=e.angle;g.add(bMidR);
+      // Balcony railing collider (block player from falling off balcony front)
+      var bRailX1=bFx-balcW2/2*e.ux, bRailY1=bFz-balcW2/2*e.uy;
+      var bRailX2=bFx+balcW2/2*e.ux, bRailY2=bFz+balcW2/2*e.uy;
+      wallColliders.push({ax:bRailX1,az:-bRailY1,bx:bRailX2,bz:-bRailY2,active:true,floor:'balcRail',yLow:SUB_H+f2base,yHigh:SUB_H+f2base+bRailH});
     }
+  }
+  // Rooftop railing colliders — prevent falling off the roof
+  for(var rci=0;rci<f2n;rci++){
+    var rce=f2edges[rci];
+    if(rce.len<0.5)continue;
+    wallColliders.push({ax:rce.ax,az:-rce.ay,bx:rce.bx,bz:-rce.by,active:true,floor:'roofRail',yLow:SUB_H+roofYv,yHigh:SUB_H+roofYv+railH});
   }
   // Rooftop railings — follow floor 2 polygon (includes cantilever extension)
   for(var rei=0;rei<f2n;rei++){var re=f2edges[rei];if(re.len<0.5)continue;var postCount=Math.max(2,Math.round(re.len/1.5));
@@ -1645,46 +2338,6 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     }
   }
 
-  // === ACCENT BOX (AC unit / storage) ===
-  // - Rectangle (n===4): opposite short-edge corner from the baca (no overlap)
-  // - Pentagon: vertex closest to P4, pushed 1.3m toward P4 (over the cantilever — decorative, OK)
-  var accVertexIdx;
-  var accUseCantilever=false;
-  if(n===4){
-    var adjNext=(bacaVertexIdx+1)%4, adjPrev=(bacaVertexIdx+3)%4;
-    var eToNext=edges[bacaVertexIdx], eToPrev=edges[adjPrev];
-    accVertexIdx=(eToNext.len<eToPrev.len)?adjNext:adjPrev;
-  }else if(n>=5 && typeof P4!=='undefined' && P4 && P4.length===2){
-    var minDP4=Infinity;
-    for(var avi=0;avi<n;avi++){
-      var dP4a=Math.hypot(poly2D[avi][0]-P4[0],poly2D[avi][1]-P4[1]);
-      if(dP4a<minDP4){minDP4=dP4a;accVertexIdx=avi}
-    }
-    accUseCantilever=true;
-  }else{
-    var farIdx=0,farDist=0;
-    for(var fi=0;fi<n;fi++){
-      var fd=Math.hypot(poly2D[fi][0]-cent[0],poly2D[fi][1]-cent[1]);
-      if(fd>farDist){farDist=fd;farIdx=fi}
-    }
-    accVertexIdx=farIdx;
-  }
-  var fv=poly2D[accVertexIdx];
-  var accX, accZ;
-  if(accUseCantilever){
-    // Push toward P4 a bit (into the cantilever zone) — keep it near the corner but inside the roof
-    var dxP4a=P4[0]-fv[0], dyP4a=P4[1]-fv[1];
-    var lP4a=Math.hypot(dxP4a,dyP4a);
-    accX=fv[0]+dxP4a/lP4a*0.6;
-    accZ=fv[1]+dyP4a/lP4a*0.6;
-  }else{
-    var toCx=cent[0]-fv[0],toCy=cent[1]-fv[1];var tcLen=Math.hypot(toCx,toCy);
-    accX=fv[0]+toCx/tcLen*1.5;accZ=fv[1]+toCy/tcLen*1.5;
-  }
-  // Slightly smaller footprint for the corner placement so it doesn't overhang the roof edge
-  var accW2=accUseCantilever?1.5:1.8, accH2=Math.min(1.8,F2*0.55), accD2=accUseCantilever?0.9:1.2;
-  var accBox=new THREE.Mesh(new THREE.BoxGeometry(accW2,accH2,accD2),matWood);accBox.position.set(accX,roofYv+accH2/2,-accZ);accBox.rotation.y=Math.atan2(dirY,dirX);accBox.castShadow=true;g.add(accBox);
-
   // === VENT BACA (tall ventilation chimney — ALWAYS above a non-cantilever wall) ===
   var bacaR=0.22, bacaH=2.3;
   var bacaCapR=bacaR+0.15;
@@ -1714,7 +2367,9 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     var ge=edges[gardenEdgeIdx];
     var VER_DEPTH=4.0;
     var VER_W=Math.min(ge.len*0.85, 6.0);
-    var VER_H_NEAR=F1+SLAB2-0.05;
+    // Veranda roof must sit BELOW F1 ceiling (y=F1) — otherwise rafters poke up through F2 floor.
+    // Near end 20cm below F1 ceiling gives ~4cm clearance for roof plank + rafters on top.
+    var VER_H_NEAR=F1-0.20;
     var VER_H_FAR=VER_H_NEAR-0.5;
     var VER_THICK=0.08;
     var COL_W=0.14;
@@ -1768,8 +2423,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   }
 
   // === SUBASMAN (plinth) + ENTRANCE STEPS ===
-  // 1m raised base, color matches roof terrace style. Shift the whole group up by SUBASMAN at the end.
-  var SUB_H=0.8;
+  // SUB_H is defined earlier (used by wall colliders too)
   // Subasman slab: extrude the same villa footprint, from local Y=-SUB_H to Y=0
   mvPolySlab(poly2D,-SUB_H,SUB_H,matRoofSlab);
   // Entrance steps: 6 steps, ~16.7cm rise, 30cm tread, 2m wide, in front of the door (longIdx edge, t=0.1)
@@ -1778,6 +2432,17 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   var stDoorCx=stDoorEdge.ax+stDoorT*stDoorEdge.dx;
   var stDoorCy=stDoorEdge.ay+stDoorT*stDoorEdge.dy;
   var stEdgeAngle=stDoorEdge.angle;
+  // Register entrance ramp for FP movement (player walks up to plinth)
+  var entRunLen=STEPS_N*STEP_TREAD;
+  var entStartX=stDoorCx+entRunLen*stDoorEdge.nx;
+  var entStartY=stDoorCy+entRunLen*stDoorEdge.ny;
+  stairZones.push({
+    cx:entStartX, cz:-entStartY,
+    dirX:-stDoorEdge.nx, dirZ:stDoorEdge.ny,
+    runLen:entRunLen, width:STAIR_W,
+    baseY:0, topY:SUB_H,
+    floor:'entrance'
+  });
   for(var si2=0;si2<STEPS_N;si2++){
     var stepH=(si2+1)*STEP_RISE;
     var stepCY=-SUB_H+stepH/2; // local coords, centered vertically
@@ -1998,6 +2663,13 @@ function addLotOverlay3D(poly,color){
 }
 function buildVillas3D(){
   if(!villaGroup)return;while(villaGroup.children.length)villaGroup.remove(villaGroup.children[0]);
+  // Reset FP collider/door/entry data each rebuild
+  wallColliders.length=0;
+  doorPivots.length=0;
+  villaEntries.length=0;
+  stairZones.length=0;
+  villaFootprints.length=0;
+  windowPanes.length=0;
   const h=STATE.floorCount*FLOOR_H;
   if(STATE.mode==='free'){
     for(let i=0;i<STATE.villas.length;i++){
@@ -2206,12 +2878,690 @@ document.addEventListener('keydown',e=>{
 });
 
 var keyPan={l:0,r:0,u:0,d:0};
-document.addEventListener('keydown',e=>{if(STATE.view!=='3d')return;if(e.key==='ArrowLeft'){keyPan.l=1;e.preventDefault()}else if(e.key==='ArrowRight'){keyPan.r=1;e.preventDefault()}else if(e.key==='ArrowUp'){keyPan.u=1;e.preventDefault()}else if(e.key==='ArrowDown'){keyPan.d=1;e.preventDefault()}});
+document.addEventListener('keydown',e=>{if(STATE.view!=='3d')return;if(fpMode){return}if(e.key==='ArrowLeft'){keyPan.l=1;e.preventDefault()}else if(e.key==='ArrowRight'){keyPan.r=1;e.preventDefault()}else if(e.key==='ArrowUp'){keyPan.u=1;e.preventDefault()}else if(e.key==='ArrowDown'){keyPan.d=1;e.preventDefault()}});
 document.addEventListener('keyup',e=>{if(e.key==='ArrowLeft')keyPan.l=0;else if(e.key==='ArrowRight')keyPan.r=0;else if(e.key==='ArrowUp')keyPan.u=0;else if(e.key==='ArrowDown')keyPan.d=0});
-function animateThree(){if(STATE.view!=='3d')return;threeAnimId=requestAnimationFrame(animateThree);if(keyPan.l||keyPan.r||keyPan.u||keyPan.d){var fwd=new THREE.Vector3();threeCamera.getWorldDirection(fwd);fwd.y=0;fwd.normalize();var right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();var mv=new THREE.Vector3();if(keyPan.l)mv.add(right.clone().multiplyScalar(-.5));if(keyPan.r)mv.add(right.clone().multiplyScalar(.5));if(keyPan.u)mv.add(fwd.clone().multiplyScalar(.5));if(keyPan.d)mv.add(fwd.clone().multiplyScalar(-.5));threeCamera.position.add(mv);threeControls.target.add(mv)}
+
+// ═══════════════════════════════════════════════════════════════
+// FIRST-PERSON (WALK) MODE
+// ═══════════════════════════════════════════════════════════════
+var fpMode=false;
+var thirdPerson=false; // toggle: 1st person vs 3rd person (PUBG-style)
+var fpYaw=0, fpPitch=0;
+var fpKeys={w:0,a:0,s:0,d:0,camL:0,camR:0,camU:0,camD:0};
+var fpMouseRecentMs=0; // timestamp of last mouse-look (for auto-follow toggle)
+var fpPosition=new THREE.Vector3(0,1.7,0);
+var fpHandGroup=null;
+var fpCharacter=null;
+var fpSavedCamPos=null, fpSavedCamRot=null, fpSavedTarget=null;
+var FP_HEIGHT=1.7;        // eye height
+var FP_BODY_HEIGHT=1.75;  // top-of-head (real human)
+var FP_SPEED=4.5;
+var FP_RADIUS=0.3;
+var TP_DISTANCE=3.5;      // 3rd-person camera distance behind character
+var TP_HEIGHT=0.6;        // 3rd-person camera height above eye level
+var fpLastTime=0;
+var raycasterFP=new THREE.Raycaster();
+
+// === GLTF (Mixamo Xbot) character model with animations ===
+var fpGLTFModel=null;       // loaded GLB scene (root)
+var fpGLTFMixer=null;       // animation mixer
+var fpGLTFActions={};       // {idle, walk, run}
+var fpGLTFCurrent='idle';
+var fpGLTFLoading=false;
+function loadFPCharacterGLTF(){
+  if(fpGLTFModel||fpGLTFLoading) return;
+  if(typeof THREE.GLTFLoader==='undefined') return;
+  fpGLTFLoading=true;
+  var loader=new THREE.GLTFLoader();
+  // Mixamo Xbot from official Three.js examples
+  loader.load('https://threejs.org/examples/models/gltf/Xbot.glb',
+    function(gltf){
+      fpGLTFModel=gltf.scene;
+      // Xbot is ~1.8m tall by default; small upscale to feel like a real adult
+      fpGLTFModel.scale.set(1.0,1.0,1.0);
+      fpGLTFModel.traverse(function(o){if(o.isMesh){o.castShadow=true;o.receiveShadow=true}});
+      fpGLTFMixer=new THREE.AnimationMixer(fpGLTFModel);
+      var anims=gltf.animations||[];
+      var wanted={idle:1, walk:0, run:0};
+      for(var i=0;i<anims.length;i++){
+        var clip=anims[i];
+        if(wanted[clip.name]!==undefined){
+          var action=fpGLTFMixer.clipAction(clip);
+          action.setEffectiveWeight(wanted[clip.name]);
+          action.play();
+          fpGLTFActions[clip.name]=action;
+        }
+      }
+      // If FP mode is already active and using primitive, swap in the GLTF model
+      if(fpMode && thirdPerson && fpCharacter && fpCharacter!==fpGLTFModel){
+        if(fpCharacter.parent) fpCharacter.parent.remove(fpCharacter);
+        fpCharacter=fpGLTFModel;
+        threeScene.add(fpCharacter);
+      }
+    },
+    undefined,
+    function(err){console.warn('Xbot model failed to load — using primitive figure',err);fpGLTFLoading=false}
+  );
+}
+// Begin loading immediately (so it's ready when FP mode entered)
+setTimeout(loadFPCharacterGLTF,200);
+
+function setCharacterAction(name){
+  if(!fpGLTFMixer||!fpGLTFActions[name])return;
+  if(fpGLTFCurrent===name) return;
+  var oldA=fpGLTFActions[fpGLTFCurrent];
+  var newA=fpGLTFActions[name];
+  if(oldA) oldA.fadeOut(0.2);
+  newA.reset().fadeIn(0.2);
+  newA.setEffectiveWeight(1);
+  fpGLTFCurrent=name;
+}
+
+function buildCharacterMesh(){
+  var grp=new THREE.Group();
+  var skin=new THREE.MeshStandardMaterial({color:0xE8C4A0,roughness:0.85});
+  var shirt=new THREE.MeshStandardMaterial({color:0x2E5A88,roughness:0.75});
+  var pants=new THREE.MeshStandardMaterial({color:0x303542,roughness:0.85});
+  var shoes=new THREE.MeshStandardMaterial({color:0x1A1A1A,roughness:0.5,metalness:0.1});
+  // Body part heights so total = 1.75m (head 0.22, torso 0.55, legs 0.85, shoes 0.06; necks ignored)
+  // Head
+  var head=new THREE.Mesh(new THREE.SphereGeometry(0.11,12,10),skin);
+  head.position.y=1.62;
+  grp.add(head);
+  // Torso
+  var torso=new THREE.Mesh(new THREE.BoxGeometry(0.36,0.55,0.22),shirt);
+  torso.position.y=1.20;
+  grp.add(torso);
+  // Arms
+  var armL=new THREE.Mesh(new THREE.BoxGeometry(0.10,0.55,0.10),shirt);
+  armL.position.set(-0.23,1.20,0);
+  grp.add(armL);
+  var armR=armL.clone(); armR.position.x=0.23; grp.add(armR);
+  // Legs
+  var legL=new THREE.Mesh(new THREE.BoxGeometry(0.13,0.85,0.14),pants);
+  legL.position.set(-0.09,0.475,0);
+  grp.add(legL);
+  var legR=legL.clone(); legR.position.x=0.09; grp.add(legR);
+  // Shoes
+  var shoeL=new THREE.Mesh(new THREE.BoxGeometry(0.13,0.06,0.22),shoes);
+  shoeL.position.set(-0.09,0.03,0.04);
+  grp.add(shoeL);
+  var shoeR=shoeL.clone(); shoeR.position.x=0.09; grp.add(shoeR);
+  // All cast shadows
+  grp.traverse(function(o){if(o.isMesh){o.castShadow=true}});
+  return grp;
+}
+
+function update3PCamera(){
+  // Place character mesh at floor level (feet at fpPosition.y - FP_HEIGHT)
+  if(fpCharacter){
+    fpCharacter.position.set(fpPosition.x, fpPosition.y - FP_HEIGHT, fpPosition.z);
+    fpCharacter.rotation.y = fpYaw + Math.PI;
+  }
+  // Pivot at character's head (where camera looks)
+  var pivot=new THREE.Vector3(fpPosition.x, fpPosition.y, fpPosition.z);
+  // Compute the FULL desired camera position (behind + above + pitch elevation).
+  var baseElev=0.18; // ~10° default tilt above character
+  var elev=baseElev+fpPitch;
+  if(elev>1.40) elev=1.40;
+  if(elev<-0.40) elev=-0.40;
+  var horiz=TP_DISTANCE*Math.cos(elev);
+  var vert=TP_DISTANCE*Math.sin(elev);
+  var desired=new THREE.Vector3(
+    pivot.x + Math.sin(fpYaw)*horiz,
+    pivot.y + vert + TP_HEIGHT*0.6,
+    pivot.z + Math.cos(fpYaw)*horiz
+  );
+  // Raycast from pivot to FULL desired position (covers walls, slabs, ceilings).
+  var toDesired=new THREE.Vector3().subVectors(desired,pivot);
+  var distance=toDesired.length();
+  if(distance<0.01){threeCamera.position.copy(desired);threeCamera.lookAt(pivot);return}
+  toDesired.normalize();
+  raycasterFP.set(pivot,toDesired);
+  raycasterFP.far=distance;
+  var hits=raycasterFP.intersectObjects(villaGroup.children,true);
+  // Filter out the character mesh + its descendants
+  var actualHits=[];
+  for(var hi=0;hi<hits.length;hi++){
+    var o=hits[hi].object;
+    var isCharacter=false;
+    var p=o; while(p){if(p===fpCharacter){isCharacter=true;break} p=p.parent}
+    if(!isCharacter) actualHits.push(hits[hi]);
+  }
+  var camDist=distance;
+  if(actualHits.length>0){
+    camDist=Math.max(0.4,actualHits[0].distance-0.18);
+  }
+  threeCamera.position.set(
+    pivot.x+toDesired.x*camDist,
+    pivot.y+toDesired.y*camDist,
+    pivot.z+toDesired.z*camDist
+  );
+  threeCamera.lookAt(pivot.x, pivot.y, pivot.z);
+}
+
+function buildFPHands(){
+  var grp=new THREE.Group();
+  var skinMat=new THREE.MeshStandardMaterial({color:0xE8C4A0,roughness:0.9,metalness:0.0});
+  // Forearms + fists
+  var fwMat=new THREE.MeshStandardMaterial({color:0x6B7B8E,roughness:0.8}); // sleeve
+  for(var s=-1;s<=1;s+=2){
+    var arm=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,0.32),fwMat);
+    arm.position.set(s*0.22,-0.32,-0.4);
+    arm.rotation.x=-0.3;
+    grp.add(arm);
+    var fist=new THREE.Mesh(new THREE.BoxGeometry(0.09,0.10,0.12),skinMat);
+    fist.position.set(s*0.22,-0.42,-0.6);
+    grp.add(fist);
+  }
+  return grp;
+}
+
+function findVillaSpawn(){
+  // Prefer villaEntries; otherwise use camera target
+  if(villaEntries.length>0){
+    var e=villaEntries[0];
+    return {pos:e.pos.clone(), look:e.look.clone()};
+  }
+  // Default: in front of first villa group
+  if(villaGroup && villaGroup.children.length>0){
+    var bbox=new THREE.Box3().setFromObject(villaGroup.children[0]);
+    var c=new THREE.Vector3(); bbox.getCenter(c);
+    return {pos:new THREE.Vector3(c.x+8,FP_HEIGHT+0.8,c.z+8), look:new THREE.Vector3(c.x,FP_HEIGHT+0.8,c.z)};
+  }
+  // Fallback to current target
+  return {pos:threeCamera.position.clone(), look:threeControls.target.clone()};
+}
+
+function enterFPMode(useThirdPerson){
+  if(fpMode)return;
+  fpMode=true;
+  thirdPerson=!!useThirdPerson;
+  // Save camera
+  fpSavedCamPos=threeCamera.position.clone();
+  fpSavedCamRot={x:threeCamera.rotation.x,y:threeCamera.rotation.y,z:threeCamera.rotation.z,order:threeCamera.rotation.order};
+  fpSavedTarget=threeControls.target.clone();
+  threeControls.enabled=false;
+  keyPan.l=keyPan.r=keyPan.u=keyPan.d=0;
+  // Spawn
+  var sp=findVillaSpawn();
+  fpPosition.copy(sp.pos);
+  fpPosition.y=FP_HEIGHT+0.8;
+  var dx=sp.look.x-sp.pos.x, dz=sp.look.z-sp.pos.z;
+  fpYaw=Math.atan2(-dx,-dz);
+  fpPitch=0;
+  threeCamera.rotation.order='YXZ';
+  threeCamera.rotation.set(fpPitch,fpYaw,0);
+  threeCamera.position.copy(fpPosition);
+  if(!threeScene.children.includes(threeCamera))threeScene.add(threeCamera);
+  if(thirdPerson){
+    // Prefer the loaded Xbot model; fall back to primitive if not yet loaded
+    if(fpGLTFModel){
+      fpCharacter=fpGLTFModel;
+    }else{
+      if(!fpCharacter || fpCharacter===fpGLTFModel) fpCharacter=buildCharacterMesh();
+      // Kick off model loading in case it failed earlier
+      loadFPCharacterGLTF();
+    }
+    threeScene.add(fpCharacter);
+    if(fpHandGroup && fpHandGroup.parent)fpHandGroup.parent.remove(fpHandGroup);
+  }else{
+    if(!fpHandGroup){fpHandGroup=buildFPHands()}
+    threeCamera.add(fpHandGroup);
+    if(fpCharacter && fpCharacter.parent)fpCharacter.parent.remove(fpCharacter);
+  }
+  // NOTE: pointer lock intentionally not requested. Mouse stays free so user can interact with
+  // UI panels (time slider, villa styles, etc.) while in character mode. Camera is controlled by
+  // arrow keys only.
+  // UI
+  var input=document.getElementById('modeToggleInput');
+  var wrap=document.getElementById('modeToggle');
+  if(input&&!input.checked) input.checked=true;
+  if(wrap) wrap.classList.add('is-character');
+  var hint=document.getElementById('fpHint');
+  if(hint)hint.style.display='block';
+  var tc=document.getElementById('touchControls');
+  if(tc)tc.classList.add('show');
+}
+
+function exitFPMode(){
+  if(!fpMode)return;
+  fpMode=false;
+  if(fpSavedCamPos)threeCamera.position.copy(fpSavedCamPos);
+  if(fpSavedCamRot){threeCamera.rotation.order=fpSavedCamRot.order;threeCamera.rotation.set(fpSavedCamRot.x,fpSavedCamRot.y,fpSavedCamRot.z)}
+  if(fpSavedTarget)threeControls.target.copy(fpSavedTarget);
+  threeControls.enabled=true;
+  if(fpHandGroup && fpHandGroup.parent)fpHandGroup.parent.remove(fpHandGroup);
+  if(fpCharacter && fpCharacter.parent)fpCharacter.parent.remove(fpCharacter);
+  fpKeys.w=fpKeys.a=fpKeys.s=fpKeys.d=0;
+  thirdPerson=false;
+  var input=document.getElementById('modeToggleInput');
+  var wrap=document.getElementById('modeToggle');
+  if(input&&input.checked) input.checked=false;
+  if(wrap) wrap.classList.remove('is-character');
+  var hint=document.getElementById('fpHint');
+  if(hint)hint.style.display='none';
+  var tc=document.getElementById('touchControls');
+  if(tc)tc.classList.remove('show');
+  // Reset stick state
+  touchStickActive=false; fpStickX=0; fpStickY=0;
+  var knob=document.getElementById('touchStickKnob');
+  if(knob)knob.style.transform='translate(-50%,-50%)';
+}
+
+(function(){
+  var input=document.getElementById('modeToggleInput');
+  var wrap=document.getElementById('modeToggle');
+  if(input){
+    input.addEventListener('change',function(){
+      if(input.checked){
+        if(!fpMode) enterFPMode(true);
+        if(wrap) wrap.classList.add('is-character');
+      }else{
+        if(fpMode) exitFPMode();
+        if(wrap) wrap.classList.remove('is-character');
+      }
+    });
+  }
+})();
+
+// === Touch joystick: left = move (sets fpKeys vector), right = look (rotates yaw/pitch) ===
+var touchStickActive=false, touchStickCenter={x:0,y:0}, touchStickRadius=55;
+var touchLookActive=false, touchLookLast={x:0,y:0};
+var fpStickX=0, fpStickY=0; // analog -1..1 from joystick
+(function bindTouchControls(){
+  var stick=document.getElementById('touchStick');
+  var knob=document.getElementById('touchStickKnob');
+  var look=document.getElementById('touchLook');
+  var interact=document.getElementById('touchInteract');
+  if(!stick||!knob||!look)return;
+  function setKnob(x,y){knob.style.transform='translate(calc(-50% + '+x+'px), calc(-50% + '+y+'px))'}
+  function endStick(){touchStickActive=false; fpStickX=0; fpStickY=0; setKnob(0,0)}
+  stick.addEventListener('pointerdown',function(e){
+    e.preventDefault();
+    var r=stick.getBoundingClientRect();
+    touchStickCenter={x:r.left+r.width/2,y:r.top+r.height/2};
+    touchStickActive=true;
+    stick.setPointerCapture(e.pointerId);
+  });
+  stick.addEventListener('pointermove',function(e){
+    if(!touchStickActive)return;
+    var dx=e.clientX-touchStickCenter.x, dy=e.clientY-touchStickCenter.y;
+    var d=Math.hypot(dx,dy);
+    if(d>touchStickRadius){dx*=touchStickRadius/d; dy*=touchStickRadius/d}
+    setKnob(dx,dy);
+    fpStickX=dx/touchStickRadius;
+    fpStickY=dy/touchStickRadius;
+  });
+  stick.addEventListener('pointerup',function(e){endStick()});
+  stick.addEventListener('pointercancel',function(e){endStick()});
+  // Look pad: drag = rotate camera
+  look.addEventListener('pointerdown',function(e){
+    e.preventDefault();
+    touchLookActive=true;
+    touchLookLast={x:e.clientX,y:e.clientY};
+    look.setPointerCapture(e.pointerId);
+  });
+  look.addEventListener('pointermove',function(e){
+    if(!touchLookActive)return;
+    var dx=e.clientX-touchLookLast.x, dy=e.clientY-touchLookLast.y;
+    touchLookLast={x:e.clientX,y:e.clientY};
+    var sens=0.006;
+    fpYaw -= dx*sens;
+    fpPitch -= dy*sens;
+    var lim=Math.PI/2-0.01;
+    if(fpPitch>lim)fpPitch=lim; if(fpPitch<-lim)fpPitch=-lim;
+    fpMouseRecentMs=performance.now();
+  });
+  look.addEventListener('pointerup',function(e){touchLookActive=false});
+  look.addEventListener('pointercancel',function(e){touchLookActive=false});
+  // Interact (E equivalent): tap door / panjur — pick whichever is closer
+  if(interact){
+    interact.addEventListener('pointerdown',function(e){
+      e.preventDefault();
+      if(!fpMode)return;
+      // Try door first, then panjur if no door nearby
+      var d=findNearbyDoor(2.2);
+      if(d){tryInteractDoor()} else {tryTogglePanjur()}
+    });
+  }
+})();
+
+// Character-mode camera is controlled by keyboard only (arrow keys). Mouse stays free for UI.
+
+document.addEventListener('keydown',function(e){
+  if(!fpMode)return;
+  var k=e.key.toLowerCase();
+  if(k==='w')fpKeys.w=1;
+  else if(k==='a')fpKeys.a=1;
+  else if(k==='s')fpKeys.s=1;
+  else if(k==='d')fpKeys.d=1;
+  else if(k==='arrowleft'){fpKeys.camL=1;e.preventDefault()}
+  else if(k==='arrowright'){fpKeys.camR=1;e.preventDefault()}
+  else if(k==='arrowup'){fpKeys.camU=1;e.preventDefault()}
+  else if(k==='arrowdown'){fpKeys.camD=1;e.preventDefault()}
+  else if(k==='escape'){exitFPMode()}
+  else if(k==='e'){tryInteractDoor()}
+  else if(k==='p'){tryTogglePanjur()}
+});
+document.addEventListener('keyup',function(e){
+  if(!fpMode)return;
+  var k=e.key.toLowerCase();
+  if(k==='w')fpKeys.w=0;
+  else if(k==='a')fpKeys.a=0;
+  else if(k==='s')fpKeys.s=0;
+  else if(k==='d')fpKeys.d=0;
+  else if(k==='arrowleft')fpKeys.camL=0;
+  else if(k==='arrowright')fpKeys.camR=0;
+  else if(k==='arrowup')fpKeys.camU=0;
+  else if(k==='arrowdown')fpKeys.camD=0;
+});
+
+// Canvas click is not used for door interaction in character mode — mouse stays free for UI.
+// Doors auto-open on approach; use E key for manual toggle.
+
+// Find nearest door within `maxDist` meters of player (XZ distance to door pivot)
+function findNearbyDoor(maxDist){
+  var bestD=maxDist*maxDist, best=null;
+  for(var i=0;i<doorPivots.length;i++){
+    var p=doorPivots[i];
+    var wp=new THREE.Vector3(); p.getWorldPosition(wp);
+    var dx=wp.x-fpPosition.x, dz=wp.z-fpPosition.z;
+    var d2=dx*dx+dz*dz;
+    if(d2<bestD){bestD=d2;best=p}
+  }
+  return best;
+}
+
+// Find nearest window pane within distance (only within ±2m of player Y range)
+function findNearbyWindow(maxDist){
+  var bestD=maxDist*maxDist, best=null;
+  for(var i=0;i<windowPanes.length;i++){
+    var w=windowPanes[i];
+    var dx=w.wx-fpPosition.x, dz=w.wz-fpPosition.z;
+    var d2=dx*dx+dz*dz;
+    // Window center Y in world coords:
+    var wy=w.liftY + w.pane.position.y; // pane local + group lift
+    if(Math.abs(wy-fpPosition.y)>2.5) continue;
+    if(d2<bestD){bestD=d2;best=w}
+  }
+  return best;
+}
+
+function tryInteractDoor(){
+  if(!fpMode||doorPivots.length===0)return;
+  // Prefer raycast (looking at door) but fall back to nearest door within 2m
+  var origin=threeCamera.position.clone();
+  var dir=new THREE.Vector3(0,0,-1).applyQuaternion(threeCamera.quaternion);
+  raycasterFP.set(origin,dir);
+  raycasterFP.far=3.5;
+  var doorMeshes=[];
+  for(var i=0;i<doorPivots.length;i++){
+    doorPivots[i].traverse(function(o){if(o.isMesh)doorMeshes.push(o)});
+  }
+  var hits=raycasterFP.intersectObjects(doorMeshes,false);
+  var p=null;
+  if(hits.length>0){
+    var obj=hits[0].object;
+    p=obj;
+    while(p && !p.userData.isDoor) p=p.parent;
+  }
+  if(!p) p=findNearbyDoor(2.2);
+  if(p && p.userData.isDoor){
+    p.userData.isOpen=!p.userData.isOpen;
+    if(p.userData.collider){p.userData.collider.active=!p.userData.isOpen}
+  }
+}
+
+function tryTogglePanjur(){
+  if(!fpMode||windowPanes.length===0)return;
+  var w=findNearbyWindow(2.5);
+  if(w){
+    w.panjurDown=!w.panjurDown;
+  }
+}
+
+// Update prompt UI based on what player is near (called each frame in FP mode)
+function updateFPPrompt(){
+  var prompt=document.getElementById('fpPrompt');
+  if(!prompt)return;
+  var msg='';
+  // Doors auto-open near the player (no prompt needed). Only prompt for panjur.
+  var w=findNearbyWindow(2.0);
+  if(w){
+    msg=w.panjurDown?'P: Panjuru kaldır':'P: Panjuru indir';
+  }
+  if(msg){prompt.textContent=msg;prompt.style.display='block'}
+  else{prompt.style.display='none'}
+}
+
+// Circle vs line-segment collision; returns the slid position
+function fpCollideAndSlide(curPos, dx, dz){
+  var newX=curPos.x+dx, newZ=curPos.z+dz;
+  // Player body Y range (eye-relative): head ≈ eye+0.1, feet = eye - FP_HEIGHT
+  var headY=curPos.y+0.10;
+  var feetY=curPos.y-FP_HEIGHT;
+  for(var pass=0;pass<3;pass++){
+    var collided=false;
+    for(var i=0;i<wallColliders.length;i++){
+      var w=wallColliders[i];
+      if(!w.active)continue;
+      // Skip colliders entirely above head or below feet (e.g. door lintels, window frames above head)
+      if(w.yLow!==undefined && (headY<w.yLow || feetY>w.yHigh)) continue;
+      var wdx=w.bx-w.ax, wdz=w.bz-w.az;
+      var len2=wdx*wdx+wdz*wdz;
+      if(len2<1e-6)continue;
+      var t=Math.max(0,Math.min(1,((newX-w.ax)*wdx+(newZ-w.az)*wdz)/len2));
+      var cx=w.ax+t*wdx, cz=w.az+t*wdz;
+      var ndx=newX-cx, ndz=newZ-cz;
+      var d2=ndx*ndx+ndz*ndz;
+      if(d2<FP_RADIUS*FP_RADIUS){
+        var d=Math.sqrt(d2);
+        if(d<1e-4){
+          // Stuck — push along wall normal (perpendicular to edge)
+          var nx=-wdz/Math.sqrt(len2), nz=wdx/Math.sqrt(len2);
+          newX += nx*FP_RADIUS;
+          newZ += nz*FP_RADIUS;
+        }else{
+          var push=(FP_RADIUS-d);
+          newX += (ndx/d)*push;
+          newZ += (ndz/d)*push;
+        }
+        collided=true;
+      }
+    }
+    if(!collided)break;
+  }
+  return {x:newX,z:newZ};
+}
+
+function fpFloorYAt(x,z,curY){
+  // Approximate current feet Y from current eye Y
+  var feetY=(curY||0)-FP_HEIGHT;
+  // 1) Stair zones — pick the one whose interpolated Y is CLOSEST to player's current feet Y
+  // (this disambiguates overlapping bottom/top stair zones at the same XZ).
+  var bestStairY=null, bestStairDist=Infinity;
+  for(var i=0;i<stairZones.length;i++){
+    var s=stairZones[i];
+    var rx=x-s.cx, rz=z-s.cz;
+    var along=rx*s.dirX+rz*s.dirZ;
+    var across=Math.abs(rx*(-s.dirZ)+rz*s.dirX);
+    if(along>-0.2 && along<s.runLen+0.2 && across<s.width/2+0.15){
+      var t=Math.max(0,Math.min(1,along/s.runLen));
+      var newY=s.baseY+t*(s.topY-s.baseY);
+      var dist=Math.abs(newY-feetY);
+      if(dist<bestStairDist){bestStairDist=dist;bestStairY=newY}
+    }
+  }
+  if(bestStairY!==null) return bestStairY;
+  // 2) Inside any villa footprint — snap to nearest floor by current Y proximity.
+  //    F1 polygon = ground-floor area. F2 polygon includes the cantilever overhang.
+  //    In the cantilever-only zone, only upper floors are valid AND only if the
+  //    player's current Y is already near one of them (otherwise they're on terrain
+  //    walking UNDER the overhang — should stay at ground level 0).
+  for(var v=0;v<villaFootprints.length;v++){
+    var vf=villaFootprints[v];
+    var inF1=pointInPoly2D(x,z,vf.poly);
+    var inF2=pointInPoly2D(x,z,vf.polyF2||vf.poly);
+    if(inF1){
+      // Inside F1 → all floors are reachable
+      var floors=vf.floorYs||[0];
+      var bestY=floors[0], bestD=Math.abs(feetY-floors[0]);
+      for(var fi=1;fi<floors.length;fi++){
+        var d=Math.abs(feetY-floors[fi]);
+        if(d<bestD){bestD=d;bestY=floors[fi]}
+      }
+      return bestY;
+    }
+    if(inF2){
+      // Cantilever-only: only snap up if we're already near F2 or roof level
+      var fs=vf.floorYs||[0];
+      var bestY2=null, bestD2=Infinity;
+      for(var fi2=1;fi2<fs.length;fi2++){
+        var d2=Math.abs(feetY-fs[fi2]);
+        if(d2<1.5 && d2<bestD2){bestD2=d2;bestY2=fs[fi2]}
+      }
+      if(bestY2!==null) return bestY2;
+      // else: player is below the overhang on terrain
+    }
+  }
+  return 0;
+}
+
+function updateFP(dt){
+  // Arrow-key turn (rotates character + camera around its axis)
+  var camRotSpeed=2.4; // rad/sec — snappy turn
+  var camPitchSpeed=1.4;
+  if(fpKeys.camL){fpYaw+=camRotSpeed*dt; fpMouseRecentMs=performance.now()}
+  if(fpKeys.camR){fpYaw-=camRotSpeed*dt; fpMouseRecentMs=performance.now()}
+  if(fpKeys.camU){fpPitch+=camPitchSpeed*dt; fpMouseRecentMs=performance.now()}
+  if(fpKeys.camD){fpPitch-=camPitchSpeed*dt; fpMouseRecentMs=performance.now()}
+  var lim=Math.PI/2-0.01;
+  if(fpPitch>lim)fpPitch=lim; if(fpPitch<-lim)fpPitch=-lim;
+  // Apply look orientation
+  threeCamera.rotation.order='YXZ';
+  threeCamera.rotation.x=fpPitch;
+  threeCamera.rotation.y=fpYaw;
+  threeCamera.rotation.z=0;
+  // Tick character animation mixer (Mixamo)
+  if(fpGLTFMixer && thirdPerson) fpGLTFMixer.update(dt);
+  // Movement (keyboard WASD + touch joystick)
+  var moveZ=(fpKeys.s-fpKeys.w);
+  var moveX=(fpKeys.d-fpKeys.a);
+  // Joystick overrides if active (analog)
+  if(touchStickActive && (Math.abs(fpStickX)>0.05 || Math.abs(fpStickY)>0.05)){
+    moveX=fpStickX;
+    moveZ=fpStickY;
+  }
+  if(moveX!==0||moveZ!==0){
+    var len=Math.hypot(moveX,moveZ);
+    if(len>1) len=1;
+    var speedScale=Math.min(1,len); // analog stick = scaled speed
+    moveX/=Math.max(len,1e-6); moveZ/=Math.max(len,1e-6);
+    // Animation: walk when moving slowly, run when full speed (or just walk)
+    if(thirdPerson) setCharacterAction(speedScale>0.7?'run':'walk');
+    var fx=-Math.sin(fpYaw), fz=-Math.cos(fpYaw);
+    var rx=Math.cos(fpYaw), rz=-Math.sin(fpYaw);
+    var worldDX=(fx*-moveZ + rx*moveX);
+    var worldDZ=(fz*-moveZ + rz*moveX);
+    var dx=worldDX*FP_SPEED*dt*speedScale;
+    var dz=worldDZ*FP_SPEED*dt*speedScale;
+    var slid=fpCollideAndSlide(fpPosition,dx,dz);
+    // Ledge protection: don't allow drops > 1.5m (block walking off floors/balconies)
+    var curFloorY=fpFloorYAt(fpPosition.x,fpPosition.z,fpPosition.y);
+    var newFloorY=fpFloorYAt(slid.x,slid.z,fpPosition.y);
+    if(newFloorY < curFloorY - 1.5){
+      // Try moving only in X or only in Z (slide along the ledge)
+      var slidX=fpCollideAndSlide(fpPosition,dx,0);
+      var floorXY=fpFloorYAt(slidX.x,slidX.z,fpPosition.y);
+      if(floorXY >= curFloorY-1.5){fpPosition.x=slidX.x;fpPosition.z=slidX.z}
+      else{
+        var slidZ=fpCollideAndSlide(fpPosition,0,dz);
+        var floorZY=fpFloorYAt(slidZ.x,slidZ.z,fpPosition.y);
+        if(floorZY >= curFloorY-1.5){fpPosition.x=slidZ.x;fpPosition.z=slidZ.z}
+        // Otherwise: don't move at all
+      }
+    }else{
+      fpPosition.x=slid.x;
+      fpPosition.z=slid.z;
+    }
+  }else if(thirdPerson){
+    setCharacterAction('idle');
+  }
+  // Vertical: ramp on stairs, otherwise stay at floor level + eye height
+  var floorY=fpFloorYAt(fpPosition.x,fpPosition.z,fpPosition.y);
+  var targetY=floorY+FP_HEIGHT;
+  // Smooth lerp; when going UP fast (e.g. stepping onto stair), allow faster transition
+  var lerpRate=(targetY>fpPosition.y)?12:6;
+  fpPosition.y += (targetY-fpPosition.y)*Math.min(1,dt*lerpRate);
+  // 3rd-person camera offset (when active)
+  if(thirdPerson){
+    update3PCamera();
+  }else{
+    threeCamera.position.copy(fpPosition);
+  }
+  // Auto-open doors on approach; STAY OPEN (no auto-close, so you're never trapped).
+  // Manual E or click toggles via tryInteractDoor() if user wants to close one.
+  for(var i=0;i<doorPivots.length;i++){
+    var p=doorPivots[i];
+    var pos=new THREE.Vector3(); p.getWorldPosition(pos);
+    var distXZ=Math.hypot(pos.x-fpPosition.x,pos.z-fpPosition.z);
+    if(distXZ<2.5 && !p.userData.isOpen){
+      p.userData.isOpen=true;
+      if(p.userData.collider) p.userData.collider.active=false;
+    }
+    var tgt=p.userData.isOpen?p.userData.openRot:p.userData.baseRot;
+    p.rotation.y += (tgt-p.rotation.y)*Math.min(1,dt*6);
+  }
+  // Animate panjur shutters — opaque blinds rolling down from the window top.
+  for(var wi=0;wi<windowPanes.length;wi++){
+    var w=windowPanes[wi];
+    var tgt=w.panjurDown?1:0;
+    w.anim += (tgt-w.anim)*Math.min(1,dt*5);
+    if(!w.shutter) continue;
+    var a=Math.max(0.001,w.anim);
+    // Scale from top: shutter vertical center slides down as it grows, so the TOP edge stays at the window top.
+    w.shutter.scale.y=a;
+    w.shutter.position.y=w.centerY + (w.h/2)*(1-a);
+    w.shutter.visible=(w.anim>0.005);
+  }
+  // Update prompt UI
+  updateFPPrompt();
+}
+
+function animateThree(){
+  if(STATE.view!=='3d')return;
+  threeAnimId=requestAnimationFrame(animateThree);
+  var now=performance.now();
+  var dt=fpLastTime?Math.min(0.1,(now-fpLastTime)/1000):0.016;
+  fpLastTime=now;
+  if(fpMode){
+    updateFP(dt);
+  }else{
+    if(keyPan.l||keyPan.r||keyPan.u||keyPan.d){
+      var fwd=new THREE.Vector3();threeCamera.getWorldDirection(fwd);fwd.y=0;fwd.normalize();
+      var right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+      var mv=new THREE.Vector3();
+      if(keyPan.l)mv.add(right.clone().multiplyScalar(-.5));
+      if(keyPan.r)mv.add(right.clone().multiplyScalar(.5));
+      if(keyPan.u)mv.add(fwd.clone().multiplyScalar(.5));
+      if(keyPan.d)mv.add(fwd.clone().multiplyScalar(-.5));
+      threeCamera.position.add(mv);threeControls.target.add(mv);
+    }
+    threeControls.update();
+  }
+  // Animate doors even when not in FP mode (for visual consistency)
+  if(!fpMode){
+    for(var di=0;di<doorPivots.length;di++){
+      var p=doorPivots[di];
+      var tgt=p.userData.isOpen?p.userData.openRot:p.userData.baseRot;
+      p.rotation.y += (tgt-p.rotation.y)*0.1;
+    }
+  }
   // Animate wanderers (humans, dogs, chickens)
   if(objectGroup)objectGroup.children.forEach(c=>{if(c.userData&&c.userData.wanderer)wandererStep(c)});
-  threeControls.update();threeRenderer.render(threeScene,threeCamera)}
+  threeRenderer.render(threeScene,threeCamera);
+}
 
 // ═══════════════════════════════════════
 // INIT — Parselli Optimum 3D
