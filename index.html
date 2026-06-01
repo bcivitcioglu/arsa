@@ -225,6 +225,9 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 .tb-toggle{display:flex;border:1.5px solid var(--border);border-radius:8px;overflow:hidden}
 .tb-toggle button{padding:9px 16px;border:none;background:#FFF;font-family:inherit;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;transition:all .12s;min-width:50px}
 .tb-toggle button.active{background:var(--accent);color:#FFF}
+.tb-room{padding:9px 14px;border:1.5px solid var(--border);border-radius:8px;background:#FFF;font-family:inherit;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;transition:all .12s;white-space:nowrap}
+.tb-room:hover{background:var(--accent-light);color:var(--text)}
+.tb-room.active{background:#2D6A4F;color:#FFF;border-color:#2D6A4F}
 .tb-iconbtn{
   width:42px;height:42px;
   border:1.5px solid var(--border);border-radius:8px;background:#FFF;color:var(--text);
@@ -257,6 +260,19 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 #touchLook{position:absolute;bottom:24px;right:24px;width:130px;height:130px;border-radius:50%;background:rgba(0,0,0,.25);border:2px solid rgba(255,255,255,.5);color:#fff;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;text-shadow:0 1px 2px #000}
 #touchInteract{position:absolute;bottom:170px;right:50px;width:74px;height:74px;border-radius:50%;background:rgba(40,140,200,.85);color:#fff;font-size:18px;font-weight:700;border:2px solid rgba(255,255,255,.5);pointer-events:auto;touch-action:none;cursor:pointer}
 @media (pointer:coarse){#touchControls.show{display:block}}
+/* Room editor toolbar */
+#roomEditBar{position:absolute;top:52px;left:50%;transform:translateX(-50%);z-index:30;display:none;align-items:center;gap:6px;padding:6px 8px;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.12);font-family:inherit;flex-wrap:wrap;max-width:calc(100vw - 20px)}
+#roomEditBar.show{display:flex}
+#roomEditBar .re-group{display:flex;gap:0;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+#roomEditBar .re-btn{padding:6px 9px;border:none;border-right:1px solid var(--border);background:var(--card);font-family:inherit;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;transition:all .12s;min-width:34px;min-height:32px;display:flex;align-items:center;justify-content:center;gap:4px}
+#roomEditBar .re-btn:last-child{border-right:none}
+#roomEditBar .re-btn:hover{background:var(--accent-light);color:var(--text)}
+#roomEditBar .re-btn.active{background:var(--accent);color:#fff}
+#roomEditBar .re-sep{width:1px;height:24px;background:var(--border);margin:0 2px}
+#roomEditBar .re-label{font-size:10px;font-weight:600;color:var(--hint);text-transform:uppercase;letter-spacing:.5px;padding:0 2px}
+#roomEditBar .re-done{padding:6px 12px;border:none;border-radius:7px;background:#2D6A4F;color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer}
+#roomHint{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);z-index:25;padding:6px 12px;background:rgba(20,20,20,.78);color:#fff;border-radius:6px;font-size:11px;display:none;max-width:90vw;text-align:center}
+#roomHint.show{display:block}
 
 /* Hide old top controls (replaced by top bar) */
 #topControls{display:none!important}
@@ -388,6 +404,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
       </select>
     </div>
     <div class="tb-actions">
+      <button id="roomBtn" class="tb-room" title="Oda Düzeni (iç duvarlar)">&#128715; Oda</button>
       <div class="tb-toggle" id="topViewToggle">
         <button data-view="2d">2D</button>
         <button data-view="3d" class="active">3D</button>
@@ -516,6 +533,31 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
       </div>
       <button class="top-btn" id="fsBtn">&#x26F6;</button>
     </div>
+    <!-- Room (interior layout) editor toolbar -->
+    <div id="roomEditBar">
+      <span class="re-label">Villa</span>
+      <div class="re-group" id="reVilla"></div>
+      <span class="re-label">Kat</span>
+      <div class="re-group" id="reFloor">
+        <button class="re-btn active" data-floor="f1">1</button>
+        <button class="re-btn" data-floor="f2">2</button>
+      </div>
+      <span class="re-sep"></span>
+      <div class="re-group" id="reTool">
+        <button class="re-btn active" data-tool="wall" title="Duvar çiz">&#9473; Duvar</button>
+        <button class="re-btn" data-tool="room" title="Oda (dikdörtgen)">&#9633; Oda</button>
+        <button class="re-btn" data-tool="door" title="Kapı koy">&#128682; Kapı</button>
+        <button class="re-btn" data-tool="erase" title="Sil" style="color:#C62828">&#128465;</button>
+      </div>
+      <span class="re-sep"></span>
+      <button class="re-btn" id="reUndo" title="Geri al">&#8630;</button>
+      <span class="re-sep"></span>
+      <button class="re-btn" id="reExport" title="Planı indir (JSON dosyası + pano)">&#11015; Plan İndir</button>
+      <button class="re-btn" id="reImport" title="Plan yükle (JSON dosyası)">&#11014; Plan Yükle</button>
+      <button class="re-done" id="reDone">Bitti</button>
+    </div>
+    <input type="file" id="reImportFile" accept="application/json,.json" style="display:none">
+    <div id="roomHint"></div>
     <div id="objectPalette">
       <div class="panel-header" data-collapse-target="objectPalette">
         <span class="panel-title">Nesneler</span>
@@ -632,7 +674,12 @@ const STATE={
   pVillaPolys:[[],[],[]],pOptimalAngle:null,pRadialResult:null,pCommonRectAB:null,pClipC:null,
   yCenter:[18,25],
   yEdgePts:[{edge:4,t:0.5,edges:[2,3,4]},{edge:1,t:0.5},{edge:0,t:0.5}],
-  vb:{x:0,y:0,w:600,h:600},sunHour:10,sunMonth:3,objects3D:[]
+  vb:{x:0,y:0,w:600,h:600},sunHour:10,sunMonth:3,objects3D:[],
+  // Interior room layouts, keyed by villa (A/B/C in parcelled, f<id> in free). Walls in villa-local
+  // OBB coords (u along longest edge, v perpendicular, origin = footprint centroid) so they ride
+  // moves/rotations. doors reference a wall by index with a position t (0..1) along it.
+  interiors:{},
+  roomEdit:null  // {active, key, floor:'f1'|'f2', tool, draft, sel} while the 2D room editor is open
 };
 
 // ═══════════════════════════════════════
@@ -890,7 +937,7 @@ function renderParcelledDims(){let h='';const edges=[{a:P1,b:P2,l:'33.0m',o:18},
 
 let baseCache='';
 function renderLight(){if(!baseCache)baseCache=renderBase();document.getElementById('map').innerHTML=baseCache+(STATE.mode==='free'?renderFreeMode():renderParcelledMode())}
-function renderFull(){baseCache=renderBase();const mode=STATE.mode==='free'?renderFreeMode():renderParcelledMode();const dims=STATE.showDims?(STATE.mode==='free'?renderFreeDims():renderParcelledDims()):'';document.getElementById('map').innerHTML=baseCache+mode+dims}
+function renderFull(){baseCache=renderBase();const mode=STATE.mode==='free'?renderFreeMode():renderParcelledMode();const dims=STATE.showDims?(STATE.mode==='free'?renderFreeDims():renderParcelledDims()):'';const editor=(STATE.roomEdit&&STATE.roomEdit.active)?renderRoomEditor():'';document.getElementById('map').innerHTML=baseCache+mode+dims+editor}
 
 // ═══════════════════════════════════════
 // DRAG & DROP
@@ -901,7 +948,13 @@ let resizeDrag=null; // {villa, axis, origW, origH, startPos}
 let vertexDrag=null; // {villa, vidx}
 let shapeMenuVilla=null;
 
-function getPos(e){const svg=document.getElementById('map'),r=svg.getBoundingClientRect(),vb=STATE.vb,cx=e.touches?e.touches[0].clientX:e.clientX,cy=e.touches?e.touches[0].clientY:e.clientY;return M(vb.x+(cx-r.left)/r.width*vb.w,vb.y+(cy-r.top)/r.height*vb.h)}
+function getPos(e){const svg=document.getElementById('map'),r=svg.getBoundingClientRect(),vb=STATE.vb,cx=e.touches?e.touches[0].clientX:e.clientX,cy=e.touches?e.touches[0].clientY:e.clientY;
+  // SVG uses preserveAspectRatio "xMidYMid meet": the viewBox is scaled UNIFORMLY to fit the
+  // element and centered (letterboxed). Invert that exactly, else the pointer drifts from the
+  // cursor whenever the element aspect ratio differs from the viewBox (e.g. square zoom on a wide screen).
+  const scale=Math.min(r.width/vb.w,r.height/vb.h);
+  const offX=(r.width-vb.w*scale)/2,offY=(r.height-vb.h*scale)/2;
+  return M(vb.x+(cx-r.left-offX)/scale, vb.y+(cy-r.top-offY)/scale);}
 function clampToAllowed(vid,dx,dy,a,n){if(canPlace(vid,dx,dy,a,n))return{cx:dx,cy:dy};const v=STATE.villas.find(v=>v.id===vid);let lo=0,hi=1;for(let i=0;i<20;i++){const mid=(lo+hi)/2;if(canPlace(vid,v.cx+mid*(dx-v.cx),v.cy+mid*(dy-v.cy),a,n))lo=mid;else hi=mid}let cx=v.cx+lo*(dx-v.cx),cy=v.cy+lo*(dy-v.cy);const rem=[dx-cx,dy-cy],corners=nGonCorners(cx,cy,v.vw,v.vh,a,n);let ne=null,nd=1e9;for(let i=0;i<buildM.length;i++){const a2=buildM[i],b=buildM[(i+1)%buildM.length];for(const c of corners){const{d}=ptSeg(c,a2,b);if(d<nd){nd=d;ne=[a2,b]}}}if(ne){const ex=ne[1][0]-ne[0][0],ey=ne[1][1]-ne[0][1],el=Math.hypot(ex,ey);if(el>.01){const tx=ex/el,ty=ey/el,sl=rem[0]*tx+rem[1]*ty;let slo=0,shi=1;for(let i=0;i<15;i++){const mid=(slo+shi)/2;if(canPlace(vid,cx+mid*sl*tx,cy+mid*sl*ty,a,n))slo=mid;else shi=mid}cx+=slo*sl*tx;cy+=slo*sl*ty}}return{cx,cy}}
 
 // Shape context menu
@@ -924,6 +977,7 @@ document.addEventListener('click',function(e){if(!e.target.closest('#shapeMenu')
 function hasClass(el,cls){const c=el.getAttribute&&el.getAttribute('class');return c&&c.indexOf(cls)!==-1}
 
 function onDown(e){
+  if(STATE.roomEdit&&STATE.roomEdit.active){roomEditDown(e);return}
   // Hide shape menu on any click
   if(!e.target.closest('#shapeMenu'))document.getElementById('shapeMenu').style.display='none';
   const tgt=e.target;
@@ -960,6 +1014,7 @@ function onDown(e){
   const[mx,my]=getPos(e);dragStartX=mx;dragStartY=my;dragOrigCx=dragActive.cx;dragOrigCy=dragActive.cy;dragOrigAngle=dragActive.angle;renderLight();
 }
 function onMove(e){
+  if(STATE.roomEdit&&STATE.roomEdit.active){roomEditMove(e);return}
   // Vertex drag
   if(vertexDrag){
     e.preventDefault();const[mx,my]=getPos(e);
@@ -1026,7 +1081,8 @@ function onMove(e){
     }
   }
 }
-function onUp(){
+function onUp(e){
+  if(STATE.roomEdit&&STATE.roomEdit.active){roomEditUp(e);return}
   if(vertexDrag){vertexDrag=null;baseCache='';renderFull();updateStatusBar();return}
   if(resizeDrag){resizeDrag=null;baseCache='';renderFull();updateStatusBar();return}
   if(yDragHandle){yDragHandle=null;pRecalcAll();return}
@@ -1036,7 +1092,7 @@ function onUp(){
 
 // Pan & Zoom
 let isPanning=false,panSX,panSY,vbSX,vbSY;
-function panStart(e){if(dragActive||yDragHandle||resizeDrag||vertexDrag)return;const t=e.target;if(hasClass(t,'villa-body')||hasClass(t,'rotate-handle')||hasClass(t,'resize-handle')||hasClass(t,'vertex-handle')||hasClass(t,'y-handle'))return;isPanning=true;const cx=e.touches?e.touches[0].clientX:e.clientX;panSX=cx;panSY=e.touches?e.touches[0].clientY:e.clientY;vbSX=STATE.vb.x;vbSY=STATE.vb.y}
+function panStart(e){if((STATE.roomEdit&&STATE.roomEdit.active)||dragActive||yDragHandle||resizeDrag||vertexDrag)return;const t=e.target;if(hasClass(t,'villa-body')||hasClass(t,'rotate-handle')||hasClass(t,'resize-handle')||hasClass(t,'vertex-handle')||hasClass(t,'y-handle'))return;isPanning=true;const cx=e.touches?e.touches[0].clientX:e.clientX;panSX=cx;panSY=e.touches?e.touches[0].clientY:e.clientY;vbSX=STATE.vb.x;vbSY=STATE.vb.y}
 function panMove(e){if(!isPanning||resizeDrag||vertexDrag)return;e.preventDefault();const cx=e.touches?e.touches[0].clientX:e.clientX,cy=e.touches?e.touches[0].clientY:e.clientY,r=document.getElementById('map').getBoundingClientRect();STATE.vb.x=vbSX-(cx-panSX)*(STATE.vb.w/r.width);STATE.vb.y=vbSY-(cy-panSY)*(STATE.vb.h/r.height);applyVB()}
 function panEnd(){isPanning=false}
 function zoomMap(d){const f=d>0?.8:1.25,nw=Math.max(150,Math.min(1200,STATE.vb.w*f)),nh=Math.max(145,Math.min(1160,STATE.vb.h*f));STATE.vb.x+=(STATE.vb.w-nw)/2;STATE.vb.y+=(STATE.vb.h-nh)/2;STATE.vb.w=nw;STATE.vb.h=nh;applyVB()}
@@ -1049,6 +1105,325 @@ svgEl.addEventListener('contextmenu',function(e){
   const vb=e.target.closest&&e.target.closest('.villa-body');
   if(vb&&STATE.mode==='free'){e.preventDefault();showShapeMenu(e,vb.getAttribute('data-villa'))}
 });
+
+// ═══════════════════════════════════════
+// ROOM EDITOR (2D interior layout → 3D)
+// ═══════════════════════════════════════
+// Villa-local OBB frame (matches buildModernVilla: polygon centroid + longest edge as +u axis).
+function villaOBB(poly2D){
+  var n=poly2D.length, cent=polyCentroid(poly2D), li=0, ll=0;
+  for(var i=0;i<n;i++){var a=poly2D[i],b=poly2D[(i+1)%n];var l=Math.hypot(b[0]-a[0],b[1]-a[1]);if(l>ll){ll=l;li=i}}
+  var a=poly2D[li],b=poly2D[(li+1)%n],dx=b[0]-a[0],dy=b[1]-a[1],L=Math.hypot(dx,dy)||1;
+  var dirX=dx/L,dirY=dy/L;
+  return {cent:cent,dirX:dirX,dirY:dirY,perpX:-dirY,perpY:dirX};
+}
+function localToWorld2D(f,u,v){return [f.cent[0]+u*f.dirX+v*f.perpX, f.cent[1]+u*f.dirY+v*f.perpY]}
+function worldToLocal2D(f,x,y){var dx=x-f.cent[0],dy=y-f.cent[1];return [dx*f.dirX+dy*f.dirY, dx*f.perpX+dy*f.perpY]}
+
+// The villas whose interiors are editable in the current mode, with stable keys matching buildVillas3D.
+function getEditableVillas(){
+  var out=[],LBL=['A','B','C'];
+  if(STATE.mode==='free'){
+    for(var i=0;i<STATE.villas.length;i++){var v=STATE.villas[i];out.push({key:'f'+v.id,label:v.id,poly:getVillaCorners(v)})}
+  }else{
+    var d=STATE.divDir, isOpt=(d==='optimum'||d==='optimum2'||d==='optimum3'||d==='optimum4'||d==='optimum6'||d==='optimum7'||d==='optimum8'||d==='optimum9');
+    if(isOpt&&STATE.pCommonRectAB&&STATE.pCommonRectAB.rects){
+      if(STATE.pCommonRectAB.rects[0])out.push({key:'A',label:'A',poly:STATE.pCommonRectAB.rects[0]});
+      if(STATE.pCommonRectAB.rects[1])out.push({key:'B',label:'B',poly:STATE.pCommonRectAB.rects[1]});
+      if(STATE.pClipC&&STATE.pClipC.length>=3)out.push({key:'C',label:'C',poly:STATE.pClipC});
+    }else{
+      for(var j=0;j<3;j++){var p=STATE.pVillaPolys[j];if(p&&p.length>=3)out.push({key:LBL[j],label:LBL[j],poly:p})}
+    }
+  }
+  return out;
+}
+function roomVilla(){var vs=getEditableVillas();return vs.find(function(v){return v.key===STATE.roomEdit.key})||vs[0]}
+// The footprint outline to SHOW/snap for the current floor: F2 uses the cantilevered (çıkma) polygon
+// so the editor reflects reality. Coordinate STORAGE always uses the ground-poly OBB frame (roomFrame),
+// so walls stay consistent between the editor and the 3D builder regardless of which outline is shown.
+function roomFloorPoly(){var v=roomVilla();if(!v)return null;if(STATE.roomEdit.floor==='f2'&&villaF2Poly[v.key]&&villaF2Poly[v.key].length>=3)return villaF2Poly[v.key];return v.poly}
+function roomFrame(){var v=roomVilla();return v?villaOBB(v.poly):null}
+
+function roomData(){
+  var k=STATE.roomEdit.key,fl=STATE.roomEdit.floor;
+  if(!STATE.interiors[k])STATE.interiors[k]={};
+  if(!STATE.interiors[k][fl])STATE.interiors[k][fl]={walls:[],doors:[]};
+  return STATE.interiors[k][fl];
+}
+
+var roomUndoStack=[];
+function roomSnapshot(){roomUndoStack.push(JSON.stringify(roomData()));if(roomUndoStack.length>50)roomUndoStack.shift()}
+function roomUndo(){if(!roomUndoStack.length)return;var k=STATE.roomEdit.key,fl=STATE.roomEdit.floor;STATE.interiors[k][fl]=JSON.parse(roomUndoStack.pop());renderFull();roomScheduleRebuild()}
+
+var _roomRebuildT=null;
+// Rebuild 3D after an edit. While drawing in 2D this is a no-op (the 2D→3D toggle rebuilds on
+// switch); it only fires live if a 3D view is already showing (e.g. future split view).
+function roomScheduleRebuild(){saveInteriors();if(_roomRebuildT)clearTimeout(_roomRebuildT);_roomRebuildT=setTimeout(function(){_roomRebuildT=null;if(threeInited&&STATE.view==='3d')buildVillas3D()},220)}
+
+// ───────── Interior plans: persistence (localStorage), export & import (pure JSON) ─────────
+// Built-in default plan — paste an exported plan here to ship it as the GitHub-Pages default.
+var DEFAULT_INTERIORS=null;
+var INTERIORS_KEY='arazi_interiors_v1';
+function saveInteriors(){try{localStorage.setItem(INTERIORS_KEY,JSON.stringify(STATE.interiors||{}));}catch(e){}}
+function loadInteriors(){try{var s=localStorage.getItem(INTERIORS_KEY);if(s){var o=JSON.parse(s);if(o&&typeof o==='object')return o;}}catch(e){}return null;}
+function roomHintMsg(m){var el=document.getElementById('roomHint');if(el){el.textContent=m;el.classList.add('show');setTimeout(function(){el.classList.remove('show');},3500);}}
+function exportPlan(){
+  var data=JSON.stringify({version:1,exported:1,interiors:STATE.interiors||{}},null,1);
+  try{if(navigator.clipboard)navigator.clipboard.writeText(data);}catch(e){}
+  try{
+    var blob=new Blob([data],{type:'application/json'});var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='oda-plan.json';document.body.appendChild(a);a.click();
+    document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(url);},2000);
+  }catch(e){}
+  roomHintMsg('Plan dışa aktarıldı (panoya kopyalandı + oda-plan.json indirildi)');
+}
+function importPlanText(text){
+  try{
+    var o=JSON.parse(text); var inter=(o&&o.interiors)?o.interiors:o;
+    if(!inter||typeof inter!=='object')throw new Error('geçersiz');
+    STATE.interiors=inter; saveInteriors();
+    if(threeInited)buildVillas3D();
+    if(STATE.roomEdit&&STATE.roomEdit.active){roomBuildVillaButtons();renderFull();}
+    roomHintMsg('Plan içe aktarıldı');
+  }catch(e){roomHintMsg('İçe aktarma hatası: '+e.message);}
+}
+function importPlanFile(file){var r=new FileReader();r.onload=function(){importPlanText(String(r.result));};r.readAsText(file);}
+
+// Snap a local point: endpoint of existing walls → footprint corners → ortho vs anchor → grid.
+function roomSnapLocal(lx,ly,anchorLocal){
+  var GS=0.25, data=roomData(), best=null, bestD=0.45;
+  for(var i=0;i<data.walls.length;i++){var w=data.walls[i];[[w.u1,w.v1],[w.u2,w.v2]].forEach(function(p){var dd=Math.hypot(p[0]-lx,p[1]-ly);if(dd<bestD){bestD=dd;best=[p[0],p[1]]}})}
+  var v=roomVilla();
+  if(v){var f=villaOBB(v.poly),fp=roomFloorPoly()||v.poly;for(var c=0;c<fp.length;c++){var lp=worldToLocal2D(f,fp[c][0],fp[c][1]);var dd=Math.hypot(lp[0]-lx,lp[1]-ly);if(dd<bestD){bestD=dd;best=[lp[0],lp[1]]}}}
+  if(best)return best;
+  if(anchorLocal){var du=lx-anchorLocal[0],dv=ly-anchorLocal[1];if(Math.abs(du)>=Math.abs(dv))ly=anchorLocal[1];else lx=anchorLocal[0]}
+  return [Math.round(lx/GS)*GS, Math.round(ly/GS)*GS];
+}
+
+// Frame the viewBox to a villa footprint with padding (in 600-space units).
+function roomZoomTo(poly){
+  var minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+  for(var i=0;i<poly.length;i++){var s=S(poly[i][0],poly[i][1]);minX=Math.min(minX,s[0]);maxX=Math.max(maxX,s[0]);minY=Math.min(minY,s[1]);maxY=Math.max(maxY,s[1])}
+  var padU=Math.max(30,(maxX-minX)*0.18), w=(maxX-minX)+2*padU, h=(maxY-minY)+2*padU, sz=Math.max(w,h);
+  STATE.vb={x:(minX+maxX)/2-sz/2, y:(minY+maxY)/2-sz/2, w:sz, h:sz};
+  applyVB();
+}
+
+function roomBuildVillaButtons(){
+  var wrap=document.getElementById('reVilla'), vs=getEditableVillas();
+  wrap.innerHTML=vs.map(function(v){return '<button class="re-btn'+(v.key===STATE.roomEdit.key?' active':'')+'" data-vkey="'+v.key+'">'+v.label+'</button>'}).join('');
+  wrap.querySelectorAll('.re-btn').forEach(function(b){b.addEventListener('click',function(){STATE.roomEdit.key=this.dataset.vkey;roomUndoStack=[];roomBuildVillaButtons();var v=roomVilla();if(v)roomZoomTo(v.poly);renderFull()})});
+}
+
+function enterRoomEdit(){
+  var vs=getEditableVillas(); if(!vs.length){return}
+  // Force 2D view
+  if(STATE.view!=='2d'){var b2=document.querySelector('#topViewToggle button[data-view="2d"]');if(b2)b2.click()}
+  STATE.roomEdit={active:true,key:vs[0].key,floor:'f1',tool:'wall',draft:null};
+  roomUndoStack=[];
+  document.getElementById('roomEditBar').classList.add('show');
+  document.getElementById('roomBtn').classList.add('active');
+  roomSetHint();
+  roomBuildVillaButtons();
+  roomZoomTo(vs[0].poly);
+  // Refresh captured stair/opening positions for the current geometry (build is hidden, we're in 2D).
+  if(threeInited)buildVillas3D();
+  renderFull();
+}
+function exitRoomEdit(){
+  if(!STATE.roomEdit)return;
+  STATE.roomEdit=null;
+  document.getElementById('roomEditBar').classList.remove('show');
+  document.getElementById('roomBtn').classList.remove('active');
+  document.getElementById('roomHint').classList.remove('show');
+  renderFull();
+}
+// Re-sync the ODA editor whenever the 2D view is (re)shown — e.g. returning from a 3D preview —
+// so the floor buttons, villa buttons, zoom frame and rendered plan all match STATE.roomEdit.
+function roomSyncOnShow(){
+  if(!(STATE.roomEdit&&STATE.roomEdit.active)){renderFull();return;}
+  document.getElementById('roomEditBar').classList.add('show');         // re-show the toolbar (was hidden in 3D)
+  document.getElementById('roomBtn').classList.add('active');           // re-select the Oda button
+  if(threeInited)buildVillas3D();                                       // refresh çıkma/stair/opening meta for current geometry
+  document.querySelectorAll('#reFloor .re-btn').forEach(function(x){x.classList.toggle('active',x.dataset.floor===STATE.roomEdit.floor);});
+  roomBuildVillaButtons();
+  roomSetHint();
+  var fp=roomFloorPoly(); if(fp)roomZoomTo(fp);
+  renderFull();
+}
+function roomSetHint(){
+  var t=STATE.roomEdit&&STATE.roomEdit.tool,m={wall:'Duvar: sürükleyerek çiz (uçlara/ızgaraya yapışır)',room:'Oda: köşegen sürükle → 4 duvar',door:'Kapı: bir duvara dokun',erase:'Sil: duvara/kapıya dokun'}[t]||'';
+  var el=document.getElementById('roomHint');el.textContent=m;el.classList.add('show');
+}
+
+// ---- Editor rendering (SVG overlay in the same zoomed viewBox) ----
+function renderRoomEditor(){
+  var v=roomVilla(); if(!v)return '';
+  var f=villaOBB(v.poly), fp=roomFloorPoly()||v.poly, data=roomData(), out='';
+  function P(u,vv){var w=localToWorld2D(f,u,vv);return S(w[0],w[1])}
+  // On F2, show the ground outline faintly so you can see how far the çıkma projects past F1.
+  if(STATE.roomEdit.floor==='f2'&&fp!==v.poly){
+    out+='<polygon points="'+ps(v.poly)+'" fill="none" stroke="#999" stroke-width="1" stroke-dasharray="4,3" opacity=".5"/>';
+  }
+  // footprint fill + outline (current floor: F2 = cantilevered/çıkma polygon)
+  out+='<polygon points="'+ps(fp)+'" fill="rgba(250,249,246,.97)" stroke="#2D6A4F" stroke-width="'+(0.22*sc)+'" stroke-linejoin="round"/>';
+  // local 1m grid within footprint bbox
+  var minU=1e9,maxU=-1e9,minV=1e9,maxV=-1e9;
+  for(var i=0;i<fp.length;i++){var lp=worldToLocal2D(f,fp[i][0],fp[i][1]);minU=Math.min(minU,lp[0]);maxU=Math.max(maxU,lp[0]);minV=Math.min(minV,lp[1]);maxV=Math.max(maxV,lp[1])}
+  if(maxU-minU<60&&maxV-minV<60){
+    for(var u=Math.ceil(minU);u<=Math.floor(maxU);u++){var p1=P(u,minV),p2=P(u,maxV);out+='<line x1="'+p1[0].toFixed(1)+'" y1="'+p1[1].toFixed(1)+'" x2="'+p2[0].toFixed(1)+'" y2="'+p2[1].toFixed(1)+'" stroke="#2D6A4F" stroke-width=".4" opacity=".12"/>'}
+    for(var vv=Math.ceil(minV);vv<=Math.floor(maxV);vv++){var q1=P(minU,vv),q2=P(maxU,vv);out+='<line x1="'+q1[0].toFixed(1)+'" y1="'+q1[1].toFixed(1)+'" x2="'+q2[0].toFixed(1)+'" y2="'+q2[1].toFixed(1)+'" stroke="#2D6A4F" stroke-width=".4" opacity=".12"/>'}
+  }
+  // Real stair footprint (the stairwell opening) — captured from the 3D build, drawn with tread hatching
+  var sh=villaStairMeta[v.key];
+  if(sh&&sh.length>=4){
+    out+='<polygon points="'+ps(sh)+'" fill="rgba(110,110,110,.16)" stroke="#777" stroke-width="'+(0.06*sc)+'" stroke-dasharray="3,2"/>';
+    for(var hi=1;hi<7;hi++){var tt=hi/7;
+      var pa=S(sh[0][0]+tt*(sh[1][0]-sh[0][0]),sh[0][1]+tt*(sh[1][1]-sh[0][1]));
+      var pb=S(sh[3][0]+tt*(sh[2][0]-sh[3][0]),sh[3][1]+tt*(sh[2][1]-sh[3][1]));
+      out+='<line x1="'+pa[0].toFixed(1)+'" y1="'+pa[1].toFixed(1)+'" x2="'+pb[0].toFixed(1)+'" y2="'+pb[1].toFixed(1)+'" stroke="#888" stroke-width=".6" opacity=".6"/>';
+    }
+    var scc=polyCentroid(sh),scp=S(scc[0],scc[1]);
+    out+='<text x="'+scp[0].toFixed(1)+'" y="'+scp[1].toFixed(1)+'" text-anchor="middle" font-size="6" font-weight="700" fill="#555" opacity=".85">MERDİVEN</text>';
+  }
+  // Exterior doors + windows for the current floor, drawn with architectural symbols:
+  //   door = white gap + inward swing leaf + arc (blue);  window = white gap + double line (cyan).
+  var exo=(villaOpenMeta[v.key]&&villaOpenMeta[v.key][STATE.roomEdit.floor])||[];
+  var fc=polyCentroid(fp);
+  for(var xi=0;xi<exo.length;xi++){var op=exo[xi];
+    // The F2 balcony/terrace door isn't a real swinging door — show no indicator for it.
+    if(op.type==='door'&&STATE.roomEdit.floor==='f2')continue;
+    var odx=op.x2-op.x1,ody=op.y2-op.y1,odl=Math.hypot(odx,ody)||1,oux=odx/odl,ouy=ody/odl,onx=-ouy,ony=oux;
+    if((fc[0]-op.x1)*onx+(fc[1]-op.y1)*ony<0){onx=-onx;ony=-ony}            // inward normal (toward villa interior)
+    var oa=S(op.x1,op.y1),ob=S(op.x2,op.y2);
+    out+='<line x1="'+oa[0].toFixed(1)+'" y1="'+oa[1].toFixed(1)+'" x2="'+ob[0].toFixed(1)+'" y2="'+ob[1].toFixed(1)+'" stroke="#fff" stroke-width="'+(0.30*sc)+'" stroke-linecap="butt"/>';
+    if(op.type==='door'){
+      var leafW=[op.x1+onx*odl,op.y1+ony*odl],lf=S(leafW[0],leafW[1]);
+      out+='<line x1="'+oa[0].toFixed(1)+'" y1="'+oa[1].toFixed(1)+'" x2="'+lf[0].toFixed(1)+'" y2="'+lf[1].toFixed(1)+'" stroke="#1565C0" stroke-width="1.4"/>';
+      out+='<path d="M'+lf[0].toFixed(1)+','+lf[1].toFixed(1)+' A'+(odl*sc).toFixed(1)+','+(odl*sc).toFixed(1)+' 0 0 1 '+ob[0].toFixed(1)+','+ob[1].toFixed(1)+'" fill="none" stroke="#1565C0" stroke-width=".8" stroke-dasharray="2,1.5"/>';
+    }else{
+      var w1a=S(op.x1+onx*0.04,op.y1+ony*0.04),w1b=S(op.x2+onx*0.04,op.y2+ony*0.04);
+      var w2a=S(op.x1-onx*0.04,op.y1-ony*0.04),w2b=S(op.x2-onx*0.04,op.y2-ony*0.04);
+      out+='<line x1="'+w1a[0].toFixed(1)+'" y1="'+w1a[1].toFixed(1)+'" x2="'+w1b[0].toFixed(1)+'" y2="'+w1b[1].toFixed(1)+'" stroke="#0288D1" stroke-width="1.1"/>';
+      out+='<line x1="'+w2a[0].toFixed(1)+'" y1="'+w2a[1].toFixed(1)+'" x2="'+w2b[0].toFixed(1)+'" y2="'+w2b[1].toFixed(1)+'" stroke="#0288D1" stroke-width="1.1"/>';
+    }
+  }
+  // walls
+  var WW=(0.1*sc);
+  for(var wi=0;wi<data.walls.length;wi++){var w=data.walls[wi];var a=P(w.u1,w.v1),b=P(w.u2,w.v2);
+    out+='<line x1="'+a[0].toFixed(1)+'" y1="'+a[1].toFixed(1)+'" x2="'+b[0].toFixed(1)+'" y2="'+b[1].toFixed(1)+'" stroke="#3A3A3A" stroke-width="'+Math.max(2,WW)+'" stroke-linecap="round"/>';
+    out+='<circle cx="'+a[0].toFixed(1)+'" cy="'+a[1].toFixed(1)+'" r="2" fill="#2D6A4F"/><circle cx="'+b[0].toFixed(1)+'" cy="'+b[1].toFixed(1)+'" r="2" fill="#2D6A4F"/>';
+  }
+  // doors (gap + swing leaf)
+  for(var di=0;di<data.doors.length;di++){var d=data.doors[di];var w=data.walls[d.wallIdx];if(!w)continue;
+    var L=Math.hypot(w.u2-w.u1,w.v2-w.v1)||1, hw=(d.width/2)/L;
+    var t0=Math.max(0,d.t-hw),t1=Math.min(1,d.t+hw);
+    var g0=P(w.u1+t0*(w.u2-w.u1),w.v1+t0*(w.v2-w.v1)), g1=P(w.u1+t1*(w.u2-w.u1),w.v1+t1*(w.v2-w.v1));
+    out+='<line x1="'+g0[0].toFixed(1)+'" y1="'+g0[1].toFixed(1)+'" x2="'+g1[0].toFixed(1)+'" y2="'+g1[1].toFixed(1)+'" stroke="#fff" stroke-width="'+Math.max(2.4,WW+1)+'" stroke-linecap="butt"/>';
+    out+='<line x1="'+g0[0].toFixed(1)+'" y1="'+g0[1].toFixed(1)+'" x2="'+g1[0].toFixed(1)+'" y2="'+g1[1].toFixed(1)+'" stroke="#C8854A" stroke-width="1" stroke-dasharray="2,1.5"/>';
+  }
+  // draft preview + live length
+  if(STATE.roomEdit.draft){var dr=STATE.roomEdit.draft;
+    if(dr.kind==='room'){
+      var c=[[dr.u1,dr.v1],[dr.u2,dr.v1],[dr.u2,dr.v2],[dr.u1,dr.v2]].map(function(p){return P(p[0],p[1])});
+      out+='<polygon points="'+c.map(function(s){return s[0].toFixed(1)+','+s[1].toFixed(1)}).join(' ')+'" fill="none" stroke="#E65100" stroke-width="'+Math.max(2,WW)+'" stroke-dasharray="4,3"/>';
+    }else{
+      var a=P(dr.u1,dr.v1),b=P(dr.u2,dr.v2);
+      out+='<line x1="'+a[0].toFixed(1)+'" y1="'+a[1].toFixed(1)+'" x2="'+b[0].toFixed(1)+'" y2="'+b[1].toFixed(1)+'" stroke="#E65100" stroke-width="'+Math.max(2,WW)+'" stroke-dasharray="4,3" stroke-linecap="round"/>';
+      var len=Math.hypot(dr.u2-dr.u1,dr.v2-dr.v1),mid=[(a[0]+b[0])/2,(a[1]+b[1])/2];
+      out+='<rect x="'+(mid[0]-11)+'" y="'+(mid[1]-16)+'" width="22" height="11" rx="2" fill="#E65100"/><text x="'+mid[0]+'" y="'+(mid[1]-7.5)+'" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">'+len.toFixed(2)+'</text>';
+    }
+  }
+  return out;
+}
+
+// ---- Editor pointer handling ----
+function roomPointerLocal(e){var f=roomFrame();if(!f)return null;var m=getPos(e);return worldToLocal2D(f,m[0],m[1])}
+function roomEditDown(e){
+  e.preventDefault();
+  var lp=roomPointerLocal(e); if(!lp)return;
+  var tool=STATE.roomEdit.tool;
+  if(tool==='wall'||tool==='room'){
+    var s=roomSnapLocal(lp[0],lp[1],null);
+    STATE.roomEdit.draft={kind:tool==='room'?'room':'wall',u1:s[0],v1:s[1],u2:s[0],v2:s[1]};
+    renderFull();
+  }else if(tool==='door'){
+    roomPlaceDoor(lp);
+  }else if(tool==='erase'){
+    roomEraseAt(lp);
+  }
+}
+function roomEditMove(e){
+  if(!STATE.roomEdit.draft)return;
+  e.preventDefault();
+  var lp=roomPointerLocal(e); if(!lp)return;
+  var dr=STATE.roomEdit.draft;
+  var s=roomSnapLocal(lp[0],lp[1],dr.kind==='room'?null:[dr.u1,dr.v1]);
+  dr.u2=s[0];dr.v2=s[1];
+  renderFull();
+}
+function roomEditUp(e){
+  var dr=STATE.roomEdit.draft; if(!dr){return}
+  STATE.roomEdit.draft=null;
+  var data=roomData();
+  if(dr.kind==='wall'){
+    if(Math.hypot(dr.u2-dr.u1,dr.v2-dr.v1)>=0.3){roomSnapshot();data.walls.push({u1:dr.u1,v1:dr.v1,u2:dr.u2,v2:dr.v2});roomScheduleRebuild()}
+  }else if(dr.kind==='room'){
+    var u1=Math.min(dr.u1,dr.u2),u2=Math.max(dr.u1,dr.u2),v1=Math.min(dr.v1,dr.v2),v2=Math.max(dr.v1,dr.v2);
+    if(u2-u1>=0.5&&v2-v1>=0.5){roomSnapshot();
+      data.walls.push({u1:u1,v1:v1,u2:u2,v2:v1},{u1:u2,v1:v1,u2:u2,v2:v2},{u1:u2,v1:v2,u2:u1,v2:v2},{u1:u1,v1:v2,u2:u1,v2:v1});
+      roomScheduleRebuild();
+    }
+  }
+  renderFull();
+}
+function roomPlaceDoor(lp){
+  var data=roomData(),best=-1,bestD=0.6,bestT=0.5;
+  for(var i=0;i<data.walls.length;i++){var w=data.walls[i];
+    var ux=w.u2-w.u1,vy=w.v2-w.v1,L2=ux*ux+vy*vy;if(L2<1e-6)continue;
+    var t=((lp[0]-w.u1)*ux+(lp[1]-w.v1)*vy)/L2;t=Math.max(0,Math.min(1,t));
+    var px=w.u1+t*ux,py=w.v1+t*vy,dd=Math.hypot(px-lp[0],py-lp[1]);
+    if(dd<bestD){bestD=dd;best=i;bestT=t}
+  }
+  if(best<0)return;
+  var w=data.walls[best],L=Math.hypot(w.u2-w.u1,w.v2-w.v1)||1,dw=0.9,half=(dw/2)/L;
+  var t=Math.max(half,Math.min(1-half,bestT));
+  roomSnapshot();data.doors.push({wallIdx:best,t:t,width:dw});roomScheduleRebuild();renderFull();
+}
+function roomEraseAt(lp){
+  var data=roomData();
+  // door first
+  for(var di=0;di<data.doors.length;di++){var d=data.doors[di],w=data.walls[d.wallIdx];if(!w)continue;
+    var px=w.u1+d.t*(w.u2-w.u1),py=w.v1+d.t*(w.v2-w.v1);
+    if(Math.hypot(px-lp[0],py-lp[1])<0.6){roomSnapshot();data.doors.splice(di,1);roomScheduleRebuild();renderFull();return}
+  }
+  // wall (point-to-segment)
+  var best=-1,bestD=0.5;
+  for(var i=0;i<data.walls.length;i++){var w=data.walls[i];var ux=w.u2-w.u1,vy=w.v2-w.v1,L2=ux*ux+vy*vy||1e-6;
+    var t=Math.max(0,Math.min(1,((lp[0]-w.u1)*ux+(lp[1]-w.v1)*vy)/L2));
+    var px=w.u1+t*ux,py=w.v1+t*vy,dd=Math.hypot(px-lp[0],py-lp[1]);if(dd<bestD){bestD=dd;best=i}
+  }
+  if(best>=0){roomSnapshot();
+    data.doors=data.doors.filter(function(d){return d.wallIdx!==best});
+    data.doors.forEach(function(d){if(d.wallIdx>best)d.wallIdx--});
+    data.walls.splice(best,1);roomScheduleRebuild();renderFull();
+  }
+}
+
+// Wiring
+document.getElementById('roomBtn').addEventListener('click',function(){
+  if(STATE.roomEdit&&STATE.roomEdit.active){
+    if(STATE.view!=='2d'){var b2=document.querySelector('#topViewToggle button[data-view="2d"]');if(b2)b2.click();} // in 3D → return to 2D ODA (resume)
+    else exitRoomEdit();                                                                                          // in 2D → close ODA
+  }else enterRoomEdit();
+});
+document.getElementById('reDone').addEventListener('click',exitRoomEdit);
+document.getElementById('reUndo').addEventListener('click',roomUndo);
+document.getElementById('reExport').addEventListener('click',exportPlan);
+document.getElementById('reImport').addEventListener('click',function(){document.getElementById('reImportFile').click();});
+document.getElementById('reImportFile').addEventListener('change',function(){if(this.files&&this.files[0])importPlanFile(this.files[0]);this.value='';});
+document.querySelectorAll('#reFloor .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reFloor .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.floor=this.dataset.floor;STATE.roomEdit.draft=null;roomUndoStack=[];var fpz=roomFloorPoly();if(fpz)roomZoomTo(fpz);renderFull()})});
+document.querySelectorAll('#reTool .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reTool .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.tool=this.dataset.tool;STATE.roomEdit.draft=null;roomSetHint();renderFull()})});
 
 // ═══════════════════════════════════════
 // UI LOGIC
@@ -1125,7 +1500,7 @@ document.getElementById('downloadBtn').addEventListener('click',function(){
 let threeInited=false,threeScene,threeCamera,threeRenderer,threeControls,threeSunLight,threeAnimId=null,villaGroup,objectGroup,landFenceGroup;
 const VILLA_COLORS=[0xD85A30,0x185FA5,0x534AB7];
 
-document.querySelectorAll('#viewToggle .toggle-btn').forEach(b=>{b.addEventListener('click',function(){document.querySelectorAll('#viewToggle .toggle-btn').forEach(x=>x.classList.remove('active'));this.classList.add('active');STATE.view=this.dataset.view;const svg=document.getElementById('map'),cv=document.getElementById('threeCanvas'),sun=document.getElementById('sunSection'),pal=document.getElementById('objectPalette'),vsp=document.getElementById('villaStylePicker');if(STATE.view==='3d'){svg.style.display='none';cv.style.display='block';sun.style.display='';pal.classList.add('show');vsp.classList.add('show');if(!threeInited)initThreeScene(cv);buildVillas3D();updateSun3D();animateThree()}else{svg.style.display='';cv.style.display='none';sun.style.display='none';pal.classList.remove('show');vsp.classList.remove('show');if(threeAnimId){cancelAnimationFrame(threeAnimId);threeAnimId=null}renderFull()}})});
+document.querySelectorAll('#viewToggle .toggle-btn').forEach(b=>{b.addEventListener('click',function(){document.querySelectorAll('#viewToggle .toggle-btn').forEach(x=>x.classList.remove('active'));this.classList.add('active');STATE.view=this.dataset.view;const svg=document.getElementById('map'),cv=document.getElementById('threeCanvas'),sun=document.getElementById('sunSection'),pal=document.getElementById('objectPalette'),vsp=document.getElementById('villaStylePicker');if(STATE.view==='3d'){svg.style.display='none';cv.style.display='block';sun.style.display='';pal.classList.add('show');vsp.classList.add('show');document.getElementById('roomEditBar').classList.remove('show');document.getElementById('roomHint').classList.remove('show');document.getElementById('roomBtn').classList.remove('active');if(!threeInited)initThreeScene(cv);buildVillas3D();updateSun3D();animateThree()}else{svg.style.display='';cv.style.display='none';sun.style.display='none';pal.classList.remove('show');vsp.classList.remove('show');if(threeAnimId){cancelAnimationFrame(threeAnimId);threeAnimId=null}roomSyncOnShow()}})});
 
 function solarPosition(lat,lon,month,hour){const doy=[15,46,74,105,135,166,196,227,258,288,319,349][month],decl=23.45*Math.sin((360/365)*(284+doy)*Math.PI/180)*Math.PI/180,latR=lat*Math.PI/180,solarNoon=12-(lon-30)/15,ha=(hour-solarNoon)*15*Math.PI/180,sinE=Math.sin(latR)*Math.sin(decl)+Math.cos(latR)*Math.cos(decl)*Math.cos(ha),el=Math.asin(Math.max(-1,Math.min(1,sinE))),cosAz=(Math.sin(decl)-Math.sin(latR)*sinE)/(Math.cos(latR)*Math.cos(el)+1e-9);let az=Math.acos(Math.max(-1,Math.min(1,cosAz)));if(ha>0)az=2*Math.PI-az;return{elevation:el,azimuth:az}}
 function sunDirection(m,h){const{elevation:el,azimuth:az}=solarPosition(LAT,LON,m,h);if(el<0)return null;const d=80;return{x:d*Math.cos(el)*Math.sin(az),y:d*Math.sin(el),z:-d*Math.cos(el)*Math.cos(az),elevation:el,azimuth:az}}
@@ -1206,7 +1581,22 @@ var doorPivots=[];
 var villaEntries=[];
 var stairZones=[]; // {cx, cz, dirX, dirZ, runLen, width, baseY, topY, floor} in world coords
 var villaFootprints=[]; // {poly: [[wx, wz],...], floorYs: [groundY, F2Y, roofY]}
+// Captured during the 3D build (keyed by villa key) so the 2D ODA editor can show real positions:
+var villaStairMeta={}; // key -> stair hole rect (4 world-2D corners) or null
+var villaOpenMeta={};  // key -> {f1:[{x1,y1,x2,y2,type}], f2:[...]} exterior door/window segments (world-2D)
+var villaF2Poly={};    // key -> the F2 footprint polygon (world-2D, includes çıkma/cantilever overhang)
+// Capture exterior openings as world-2D segments from an edge list + per-edge opening arrays.
+function captureOpenings(edgesArr, openByEdge){
+  var out=[]; if(!openByEdge) return out;
+  for(var ei=0;ei<edgesArr.length;ei++){var ops=openByEdge[ei]; if(!ops) continue; var e=edgesArr[ei];
+    for(var k=0;k<ops.length;k++){var op=ops[k], hw=op.width/(2*e.len), t1=Math.max(0,op.t-hw), t2=Math.min(1,op.t+hw);
+      out.push({x1:e.ax+t1*e.dx,y1:e.ay+t1*e.dy,x2:e.ax+t2*e.dx,y2:e.ay+t2*e.dy,type:op.type});}}
+  return out;
+}
 var windowPanes=[]; // {pane (mesh), shutter (mesh), wx, wz, faceX, faceZ, panjurDown, anim}
+// Plain-white interior paint — used for the INSIDE face of exterior walls (exterior keeps its cladding).
+var _interiorWhiteMat=null;
+function interiorWhiteMat(){if(!_interiorWhiteMat)_interiorWhiteMat=new THREE.MeshStandardMaterial({color:0xF7F7F4,roughness:0.92,metalness:0,side:THREE.DoubleSide});return _interiorWhiteMat;}
 
 // Register a window pane for FP panjur (P key) interaction.
 // The shutter is OPAQUE and casts shadows — it actually blocks light when down.
@@ -1266,6 +1656,9 @@ function buildWallPanels(polyArr,edgesArr,yBase,wallH,openingsByEdge,mat,group,t
   thickness=thickness||0.22;
   liftY=liftY||0;
   var n=polyArr.length;
+  // Polygon centroid → decide which face of each wall box is interior (painted white).
+  var pcx=0,pcy=0; for(var pci=0;pci<n;pci++){pcx+=polyArr[pci][0];pcy+=polyArr[pci][1];} pcx/=n; pcy/=n;
+  var whiteMat=interiorWhiteMat();
   for(var ei=0;ei<n;ei++){
     var e=edgesArr[ei];
     var ops=((openingsByEdge&&openingsByEdge[ei])||[]).slice().sort(function(a,b){return a.t-b.t});
@@ -1302,7 +1695,12 @@ function buildWallPanels(polyArr,edgesArr,yBase,wallH,openingsByEdge,mat,group,t
       var midX=e.ax+midT*e.dx;
       var midY=e.ay+midT*e.dy;
       var midYworld=yBase+(s.yLow+s.yHigh)/2;
-      var box=new THREE.Mesh(new THREE.BoxGeometry(segLen,segH,thickness),mat);
+      // Box faces order: [+X,-X,+Y,-Y,+Z,-Z]. After rotation.y, local +Z maps to 2D dir (e.uy,-e.ux).
+      // The face pointing toward the polygon centroid is the interior face → paint it white.
+      var eux=e.dx/e.len, euy=e.dy/e.len;
+      var plusZinside=(euy*(pcx-midX) - eux*(pcy-midY))>0;
+      var faceMats=plusZinside?[mat,mat,mat,mat,whiteMat,mat]:[mat,mat,mat,mat,mat,whiteMat];
+      var box=new THREE.Mesh(new THREE.BoxGeometry(segLen,segH,thickness),faceMats);
       box.position.set(midX,midYworld,-midY);
       box.rotation.y=e.angle;
       box.castShadow=true;
@@ -1335,6 +1733,54 @@ function buildWallPanels(polyArr,edgesArr,yBase,wallH,openingsByEdge,mat,group,t
     col.castShadow=true;
     col.receiveShadow=true;
     group.add(col);
+  }
+}
+
+// Build a floor's INTERIOR partition walls + doors from STATE.interiors (villa-local coords).
+// Doors reuse the building-door machinery: buildHingedDoor() registers them in doorPivots and a
+// linked, toggleable collider is pushed — so they auto-open on approach and stop being obstacles,
+// exactly like the front door. group is lifted by liftY (SUB_H for modern villas), so mesh Y is
+// local (unlifted) while colliders are stored lifted in world coords.
+function buildInteriorWalls(group, poly2D, villaKey, floorKey, baseY, wallH, liftY, wallMat, doorMat, colliderTag){
+  var vi=STATE.interiors&&STATE.interiors[villaKey]; if(!vi) return;
+  var data=vi[floorKey]; if(!data||!data.walls||!data.walls.length) return;
+  var f=villaOBB(poly2D);
+  var TH=0.10, DOOR_H=Math.min(2.05, wallH-0.08);
+  // Interior partition walls are plain white regardless of the villa's exterior cladding.
+  var intMat=new THREE.MeshStandardMaterial({color:0xF7F7F4,roughness:0.9,metalness:0,side:THREE.DoubleSide});
+  for(var wi=0; wi<data.walls.length; wi++){
+    var w=data.walls[wi];
+    var A=localToWorld2D(f,w.u1,w.v1), B=localToWorld2D(f,w.u2,w.v2);
+    var ax=A[0],ay=A[1], dx=B[0]-ax, dy=B[1]-ay, L=Math.hypot(dx,dy);
+    if(L<0.05) continue;
+    var ux=dx/L, uy=dy/L, ang=Math.atan2(dy,dx);
+    var doors=[];
+    for(var k=0;k<(data.doors||[]).length;k++){ if(data.doors[k].wallIdx===wi){var dd=data.doors[k]; doors.push({t:dd.t,width:dd.width||0.9})} }
+    doors.sort(function(p,q){return p.t-q.t});
+    // Wall split into solid segments around the door gaps.
+    var cuts=doors.map(function(d){var h=(d.width/2)/L; return [Math.max(0,d.t-h),Math.min(1,d.t+h)]}).sort(function(p,q){return p[0]-q[0]});
+    var segs=[], cursor=0;
+    for(var ci=0;ci<cuts.length;ci++){ if(cuts[ci][0]>cursor+0.001) segs.push([cursor,cuts[ci][0]]); cursor=Math.max(cursor,cuts[ci][1]); }
+    if(cursor<0.999) segs.push([cursor,1]);
+    for(var si=0;si<segs.length;si++){
+      var t0=segs[si][0],t1=segs[si][1], segLen=(t1-t0)*L; if(segLen<0.02) continue;
+      var mt=(t0+t1)/2, mx=ax+mt*dx, my=ay+mt*dy;
+      var box=new THREE.Mesh(new THREE.BoxGeometry(segLen,wallH,TH),intMat);
+      box.position.set(mx,baseY+wallH/2,-my); box.rotation.y=ang; box.castShadow=true; box.receiveShadow=true; group.add(box);
+      wallColliders.push({ax:ax+t0*dx,az:-(ay+t0*dy),bx:ax+t1*dx,bz:-(ay+t1*dy),active:true,floor:colliderTag,yLow:liftY+baseY,yHigh:liftY+baseY+wallH});
+    }
+    // Door openings: lintel above + hinged auto-open door + toggleable collider.
+    for(var oi=0;oi<doors.length;oi++){
+      var d=doors[oi], h=(d.width/2)/L, t0d=Math.max(0,d.t-h), t1d=Math.min(1,d.t+h), dw=(t1d-t0d)*L;
+      if(dw<0.2) continue;
+      var mtd=(t0d+t1d)/2, mxd=ax+mtd*dx, myd=ay+mtd*dy;
+      if(wallH-DOOR_H>0.05){ var lint=new THREE.Mesh(new THREE.BoxGeometry(dw,wallH-DOOR_H,TH),intMat); lint.position.set(mxd,baseY+DOOR_H+(wallH-DOOR_H)/2,-myd); lint.rotation.y=ang; lint.castShadow=true; lint.receiveShadow=true; group.add(lint); }
+      var hx=ax+t0d*dx, hy=ay+t0d*dy;
+      var piv=buildHingedDoor(hx, baseY+DOOR_H/2, -hy, dw, DOOR_H, Math.atan2(uy,ux), 1, doorMat, group);
+      var ex=ax+t1d*dx, ey=ay+t1d*dy;
+      var col={ax:hx,az:-hy,bx:ex,bz:-ey,active:true,floor:colliderTag,yLow:liftY+baseY,yHigh:liftY+baseY+DOOR_H,isDoor:true};
+      wallColliders.push(col); piv.userData.collider=col;
+    }
   }
 }
 
@@ -1516,7 +1962,7 @@ function makeGlassMaterial(emissive){
 }
 
 // Universal house builder — works for any polygon footprint (hollow walls, glass windows, hinged door)
-function buildHouseFromPoly(poly2D,height,color){
+function buildHouseFromPoly(poly2D,height,color,villaKey){
   const g=new THREE.Group();
   const cent=polyCentroid(poly2D);
   const n=poly2D.length;
@@ -1559,6 +2005,7 @@ function buildHouseFromPoly(poly2D,height,color){
   // Wall material — solid color, double-sided
   const wallMat=new THREE.MeshPhongMaterial({color:color,side:THREE.DoubleSide});
   buildWallPanels(poly2D,edges,0,height,openings,wallMat,g,0.2,0,'F1');
+  if(villaKey) buildInteriorWalls(g, poly2D, villaKey, 'f1', 0, height, 0, wallMat, new THREE.MeshPhongMaterial({color:0x8B5A2B,side:THREE.DoubleSide}), 'F1int');
   // Interior ground floor
   (function(){
     const sh=new THREE.Shape();
@@ -1628,7 +2075,7 @@ function buildHouseFromPoly(poly2D,height,color){
 // Modern villa builder for Optimum 1-4 modes — unified edge-based approach for all shapes
 // rectCantilever: if true, apply 1.5m cantilever to rectangle villas
 // addVeranda: if true, extend a wooden shade veranda (4m) from the garden-side edge
-function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode){
+function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode,villaKey){
   var g=new THREE.Group();
   var n=poly2D.length;
   var cent=polyCentroid(poly2D);
@@ -1908,6 +2355,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
 
   // === Build hollow walls with actual openings ===
   buildWallPanels(poly2D, edges, 0, F1, openingsF1, matConcrete, g, 0.22, SUB_H, 'F1');
+  if(villaKey) buildInteriorWalls(g, poly2D, villaKey, 'f1', 0, F1, SUB_H, matConcrete, matDoor, 'F1int');
 
   // === Interior ground floor (visible from inside, no hole — stairs sit on it) ===
   (function addGroundFloor(){
@@ -2020,10 +2468,17 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     stairHoleRect2D=makeStairHoleRect2D(sx,sy,fdX2D,fdY2D,holeDirMin,holeDirMax,holePerpMin,holePerpMax);
     stairPlacement={sx2D:sx,sy2D:sy,fdX2D:fdX2D,fdY2D:fdY2D,flipPerp:stairFlipPerp,swapYHalves:true,edgeIdx:stairEdgeIdx,fits:found};
   })();
+  // Expose the real stair footprint (the stairwell opening) + exterior openings to the 2D ODA editor.
+  if(villaKey){
+    villaStairMeta[villaKey]=stairHoleRect2D?stairHoleRect2D.slice():null;
+    villaOpenMeta[villaKey]={f1:captureOpenings(edges,openingsF1),f2:captureOpenings(f2edges,openingsF2)};
+    villaF2Poly[villaKey]=f2poly?f2poly.slice():null;
+  }
 
   // Floor 2 walls + slabs (use f2poly for cantilever effect; mid-slab creates visible overhang ceiling)
   mvPolySlab(f2poly,F1,SLAB2,matConcreteSlab,stairHoleRect2D?[stairHoleRect2D]:null);
   buildWallPanels(f2poly, f2edges, f2base, F2, openingsF2, matConcreteF2, g, 0.22, SUB_H, 'F2');
+  if(villaKey) buildInteriorWalls(g, poly2D, villaKey, 'f2', f2base, F2, SUB_H, matConcreteF2, matDoor, 'F2int');
 
   // === Interior F2 floor (top of inter-floor slab, with stair hole) ===
   (function addF2Floor(){
@@ -2079,10 +2534,9 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       var hcX=(c[0][0]+c[1][0]+c[2][0]+c[3][0])/4;
       var hcY=(c[0][1]+c[1][1]+c[2][1]+c[3][1])/4;
       var swThick=0.15;
-      // F1 stays open (stair is a sculptural feature in the open living space).
-      // Walls exist only on F2, from F2 floor up to the roof-slab bottom.
-      var swBottom=f2base;            // local y of wall bottom (= F2 walking surface)
-      var swHeight=F2;                // wall height on F2
+      // Enclose the stairwell on BOTH floors: walls run continuously from the ground floor (y=0) up to
+      // the roof slab, where the rooftop stair tower continues. 3 sides walled; the entry side stays open.
+      var swBottom=0, swHeight=roofYv;     // ground → roof slab top (meets the tower)
       function addStairwellWall(x1,y1,x2,y2){
         var len=Math.hypot(x2-x1,y2-y1);
         if(len<0.1) return;
@@ -2098,21 +2552,89 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
         wall.rotation.y=ang;
         wall.castShadow=true; wall.receiveShadow=true;
         g.add(wall);
-        // Collider only at F2 level — F1 stays fully walkable
         wallColliders.push({ax:x1,az:-y1,bx:x2,bz:-y2,active:true,floor:'stairwell',yLow:SUB_H+swBottom,yHigh:SUB_H+swBottom+swHeight});
       }
-      // Skip c[0]-c[1] (perpMin = adjacent to the building wall, redundant).
-      // Skip the entry side (depends on swapYHalves):
-      //   default (swapYHalves=false): entry is at dirMin  (skip c[3]-c[0])  → add dirMax + perpMax walls.
-      //   swapped (swapYHalves=true):  entry is at dirMax  (skip c[1]-c[2])  → add dirMin + perpMax walls.
+      // Wall the 3 non-entry sides (perpMin, perpMax, and the non-entry dir end). Entry side stays open
+      // — same side as the rooftop tower, so the shaft + tower form one continuous open channel.
       var stairSwapped=stairPlacement && stairPlacement.swapYHalves;
-      if(stairSwapped){
-        addStairwellWall(c[3][0],c[3][1],c[0][0],c[0][1]); // dirMin side
-        addStairwellWall(c[2][0],c[2][1],c[3][0],c[3][1]); // perpMax side
-      }else{
-        addStairwellWall(c[1][0],c[1][1],c[2][0],c[2][1]); // dirMax side
-        addStairwellWall(c[2][0],c[2][1],c[3][0],c[3][1]); // perpMax side
+      if(stairSwapped){ // entry at dirMax (c1-c2)
+        addStairwellWall(c[0][0],c[0][1],c[1][0],c[1][1]); // perpMin
+        addStairwellWall(c[2][0],c[2][1],c[3][0],c[3][1]); // perpMax
+        addStairwellWall(c[3][0],c[3][1],c[0][0],c[0][1]); // dirMin
+      }else{           // entry at dirMin (c3-c0)
+        addStairwellWall(c[0][0],c[0][1],c[1][0],c[1][1]); // perpMin
+        addStairwellWall(c[1][0],c[1][1],c[2][0],c[2][1]); // dirMax
+        addStairwellWall(c[2][0],c[2][1],c[3][0],c[3][1]); // perpMax
       }
+
+      // === F1 ONLY: close the non-walkable half of the entry opening ===
+      // The entry edge (dirMax = c1→c2) spans both flight slots. On the ground floor you only board the
+      // BOTTOM flight; the other slot is the underside of the upper flight (not walkable on F1). Wall that
+      // half, ground→F2-floor only, so the F2 arrival above stays open. Which half is the bottom (boarding)
+      // flight depends on flipPerp: bottom flight sits on +perp(build); hole-perp (c1→c2) equals that when
+      // flipPerp is false, and is reversed when true.
+      (function(){
+        var entryFlip=stairPlacement&&stairPlacement.flipPerp;
+        var Mx=(c[1][0]+c[2][0])/2, My=(c[1][1]+c[2][1])/2;
+        var ex1,ey1,ex2,ey2;
+        if(entryFlip){ ex1=Mx; ey1=My; ex2=c[2][0]; ey2=c[2][1]; }   // boarding on c1 side → wall c2 half
+        else         { ex1=c[1][0]; ey1=c[1][1]; ex2=Mx; ey2=My; }   // boarding on c2 side → wall c1 half
+        var len=Math.hypot(ex2-ex1,ey2-ey1); if(len<0.1) return;
+        var midX=(ex1+ex2)/2, midY=(ey1+ey2)/2, nx=hcX-midX, ny=hcY-midY, nL=Math.hypot(nx,ny)||1; nx/=nL; ny/=nL;
+        midX+=swThick*0.5*nx; midY+=swThick*0.5*ny;
+        var h1=f2base; // ground → F2 floor (F1 height only)
+        var hw=new THREE.Mesh(new THREE.BoxGeometry(len,h1,swThick),matConcrete);
+        hw.position.set(midX,h1/2,-midY); hw.rotation.y=Math.atan2(ey2-ey1,ex2-ex1);
+        hw.castShadow=true; hw.receiveShadow=true; g.add(hw);
+        wallColliders.push({ax:ex1,az:-ey1,bx:ex2,bz:-ey2,active:true,floor:'stairF1half',yLow:SUB_H,yHigh:SUB_H+h1});
+      })();
+
+      // === Rooftop stair tower (merdiven evi): FULLY enclose the roof exit — 4 walls + a roof cap. ===
+      // The entry (dirMax) side is now also walled, with a real DOOR on the stair (exit) half so you can
+      // step out onto the terrace; the non-stair half of that side is solid wall.
+      var twThick=0.15, twH=2.3, twBottom=roofYv;
+      function addTowerWall(x1,y1,x2,y2){
+        var len=Math.hypot(x2-x1,y2-y1); if(len<0.1) return;
+        var midX=(x1+x2)/2, midY=(y1+y2)/2, nx=hcX-midX, ny=hcY-midY, nL=Math.hypot(nx,ny)||1; nx/=nL; ny/=nL;
+        midX+=twThick*0.5*nx; midY+=twThick*0.5*ny;
+        var wall=new THREE.Mesh(new THREE.BoxGeometry(len,twH,twThick),matConcrete);
+        wall.position.set(midX,twBottom+twH/2,-midY); wall.rotation.y=Math.atan2(y2-y1,x2-x1);
+        wall.castShadow=true; wall.receiveShadow=true; g.add(wall);
+        wallColliders.push({ax:x1,az:-y1,bx:x2,bz:-y2,active:true,floor:'stairtower',yLow:SUB_H+twBottom,yHigh:SUB_H+twBottom+twH});
+      }
+      // A tower wall with a centered auto-open door (used for the stair/exit half of the entry side).
+      function addTowerDoorWall(x1,y1,x2,y2){
+        var dx=x2-x1, dy=y2-y1, L=Math.hypot(dx,dy); if(L<0.3){addTowerWall(x1,y1,x2,y2);return;}
+        var dw=Math.min(0.9,L-0.08), t0=0.5-(dw/2)/L, t1=0.5+(dw/2)/L, doorH=Math.min(2.05,twH-0.12);
+        var nx=hcX-((x1+x2)/2), ny=hcY-((y1+y2)/2), nL=Math.hypot(nx,ny)||1; nx/=nL; ny/=nL;
+        function seg(ta,tb,yLow,yHigh){
+          var sl=(tb-ta)*L; if(sl<0.01)return; var sh=yHigh-yLow; if(sh<0.01)return;
+          var mt=(ta+tb)/2, mx=x1+mt*dx+twThick*0.5*nx, my=y1+mt*dy+twThick*0.5*ny;
+          var w=new THREE.Mesh(new THREE.BoxGeometry(sl,sh,twThick),matConcrete);
+          w.position.set(mx,twBottom+yLow+sh/2,-my); w.rotation.y=Math.atan2(dy,dx);
+          w.castShadow=true; w.receiveShadow=true; g.add(w);
+          wallColliders.push({ax:x1+ta*dx,az:-(y1+ta*dy),bx:x1+tb*dx,bz:-(y1+tb*dy),active:true,floor:'stairtower',yLow:SUB_H+twBottom+yLow,yHigh:SUB_H+twBottom+yHigh});
+        }
+        seg(0,t0,0,twH); seg(t1,1,0,twH); seg(t0,t1,doorH,twH);   // jambs + lintel
+        var ux=dx/L, uy=dy/L, hx=x1+t0*dx, hy=y1+t0*dy, ex=x1+t1*dx, ey=y1+t1*dy;
+        // swing the door OUTWARD onto the terrace (away from the hole centre)
+        var emx=(x1+x2)/2-hcX, emy=(y1+y2)/2-hcY, swing=(((-uy)*emx+ux*emy)>0)?1:-1;
+        var piv=buildHingedDoor(hx,twBottom+doorH/2,-hy,dw,doorH,Math.atan2(uy,ux),swing,matDoor,g);
+        var col={ax:hx,az:-hy,bx:ex,bz:-ey,active:true,floor:'stairtower',yLow:SUB_H+twBottom,yHigh:SUB_H+twBottom+doorH,isDoor:true};
+        wallColliders.push(col); piv.userData.collider=col;
+      }
+      // 3 solid sides + the entry side split into a solid (non-stair) half and a door (stair) half.
+      addTowerWall(c[0][0],c[0][1],c[1][0],c[1][1]); // perpMin
+      addTowerWall(c[2][0],c[2][1],c[3][0],c[3][1]); // perpMax
+      if(stairSwapped) addTowerWall(c[3][0],c[3][1],c[0][0],c[0][1]); else addTowerWall(c[1][0],c[1][1],c[2][0],c[2][1]); // non-entry dir end
+      // entry side = dirMax (c1→c2). The roof EXIT is the TOP flight (perp 0) — the OPPOSITE half from F1's
+      // boarding (bottom flight). Door goes on that top-flight half; the other half is solid.
+      //   flipPerp false → top flight on c1 (perpMin) half;  true → on c2 (perpMax) half.
+      var twMx=(c[1][0]+c[2][0])/2, twMy=(c[1][1]+c[2][1])/2, twFlip=stairPlacement&&stairPlacement.flipPerp;
+      if(twFlip){ addTowerWall(c[1][0],c[1][1],twMx,twMy); addTowerDoorWall(twMx,twMy,c[2][0],c[2][1]); }   // exit half M→c2
+      else      { addTowerDoorWall(c[1][0],c[1][1],twMx,twMy); addTowerWall(twMx,twMy,c[2][0],c[2][1]); }   // exit half c1→M
+      // Roof cap over the tower (covers the stair opening from above)
+      mvPolySlab(c, twBottom+twH, 0.18, matConcrete);
     }
   })();
 
@@ -2669,12 +3191,13 @@ function buildVillas3D(){
   villaEntries.length=0;
   stairZones.length=0;
   villaFootprints.length=0;
+  villaStairMeta={};villaOpenMeta={};villaF2Poly={};
   windowPanes.length=0;
   const h=STATE.floorCount*FLOOR_H;
   if(STATE.mode==='free'){
     for(let i=0;i<STATE.villas.length;i++){
       const v=STATE.villas[i],corners=getVillaCorners(v);
-      const house=buildHouseFromPoly(corners,h,VILLA_COLORS[i]);
+      const house=buildHouseFromPoly(corners,h,VILLA_COLORS[i],'f'+v.id);
       villaGroup.add(house);
     }
     for(let i=0;i<STATE.dynamicLots.length;i++){const l=STATE.dynamicLots[i];if(l&&l.length>=3)addLotOverlay3D(l,VILLA_COLORS[i])}
@@ -2686,13 +3209,16 @@ function buildVillas3D(){
       // Optimum 8/9 only: all 3 villas get a wooden veranda on garden side
       const rectCantilever=(dir==='optimum6'||dir==='optimum7'||dir==='optimum8'||dir==='optimum9');
       const addVeranda=(dir==='optimum8'||dir==='optimum9');
-      for(let i=0;i<2;i++){const r=STATE.pCommonRectAB.rects[i];if(r&&r.length>=3){const house=buildModernVilla(r,h,VILLA_COLORS[i],rectCantilever,addVeranda);villaGroup.add(house)}}
-      if(STATE.pClipC&&STATE.pClipC.length>=3){const house=buildModernVilla(STATE.pClipC,h,VILLA_COLORS[2],false,addVeranda);villaGroup.add(house)}
+      const KEYS=['A','B','C'];
+      for(let i=0;i<2;i++){const r=STATE.pCommonRectAB.rects[i];if(r&&r.length>=3){const house=buildModernVilla(r,h,VILLA_COLORS[i],rectCantilever,addVeranda,false,KEYS[i]);villaGroup.add(house)}}
+      if(STATE.pClipC&&STATE.pClipC.length>=3){const house=buildModernVilla(STATE.pClipC,h,VILLA_COLORS[2],false,addVeranda,false,'C');villaGroup.add(house)}
     }else if(dir==='optimum5'){
       // Optimum 5 (Plan B): 3 rectangular villas with divider-aware cantilever (1.5m on edges away from neighbors)
-      for(let i=0;i<3;i++){const p=STATE.pVillaPolys[i];if(p&&p.length>=3){const house=buildModernVilla(p,h,VILLA_COLORS[i],false,false,true);villaGroup.add(house)}}
+      const KEYS=['A','B','C'];
+      for(let i=0;i<3;i++){const p=STATE.pVillaPolys[i];if(p&&p.length>=3){const house=buildModernVilla(p,h,VILLA_COLORS[i],false,false,true,KEYS[i]);villaGroup.add(house)}}
     }else{
-      for(let i=0;i<3;i++){const p=STATE.pVillaPolys[i];if(p&&p.length>=3){const house=buildHouseFromPoly(p,h,VILLA_COLORS[i]);villaGroup.add(house)}}
+      const KEYS=['A','B','C'];
+      for(let i=0;i<3;i++){const p=STATE.pVillaPolys[i];if(p&&p.length>=3){const house=buildHouseFromPoly(p,h,VILLA_COLORS[i],KEYS[i]);villaGroup.add(house)}}
     }
     for(let i=0;i<3;i++){const l=STATE.pParcels[i];if(l&&l.length>=3)addLotOverlay3D(l,VILLA_COLORS[i])}
   }
@@ -2878,8 +3404,23 @@ document.addEventListener('keydown',e=>{
 });
 
 var keyPan={l:0,r:0,u:0,d:0};
-document.addEventListener('keydown',e=>{if(STATE.view!=='3d')return;if(fpMode){return}if(e.key==='ArrowLeft'){keyPan.l=1;e.preventDefault()}else if(e.key==='ArrowRight'){keyPan.r=1;e.preventDefault()}else if(e.key==='ArrowUp'){keyPan.u=1;e.preventDefault()}else if(e.key==='ArrowDown'){keyPan.d=1;e.preventDefault()}});
-document.addEventListener('keyup',e=>{if(e.key==='ArrowLeft')keyPan.l=0;else if(e.key==='ArrowRight')keyPan.r=0;else if(e.key==='ArrowUp')keyPan.u=0;else if(e.key==='ArrowDown')keyPan.d=0});
+function _typingInField(){var el=document.activeElement;return el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.tagName==='SELECT'||el.isContentEditable);}
+// Normal (orbit) 3D camera pan — arrow keys AND WASD (WASD via e.code = layout-independent).
+document.addEventListener('keydown',e=>{
+  if(STATE.view!=='3d'||fpMode||_typingInField())return;
+  var k=e.key,c=e.code;
+  if(k==='ArrowLeft'||c==='KeyA'){keyPan.l=1;e.preventDefault();}
+  else if(k==='ArrowRight'||c==='KeyD'){keyPan.r=1;e.preventDefault();}
+  else if(k==='ArrowUp'||c==='KeyW'){keyPan.u=1;e.preventDefault();}
+  else if(k==='ArrowDown'||c==='KeyS'){keyPan.d=1;e.preventDefault();}
+});
+document.addEventListener('keyup',e=>{
+  var k=e.key,c=e.code;
+  if(k==='ArrowLeft'||c==='KeyA')keyPan.l=0;
+  else if(k==='ArrowRight'||c==='KeyD')keyPan.r=0;
+  else if(k==='ArrowUp'||c==='KeyW')keyPan.u=0;
+  else if(k==='ArrowDown'||c==='KeyS')keyPan.d=0;
+});
 
 // ═══════════════════════════════════════════════════════════════
 // FIRST-PERSON (WALK) MODE
@@ -3565,6 +4106,8 @@ function animateThree(){
 
 // ═══════════════════════════════════════
 // INIT — Parselli Optimum 3D
+// Interior plans: your saved edits (localStorage) take precedence, then the built-in default, then empty.
+STATE.interiors=loadInteriors()||DEFAULT_INTERIORS||{};
 computeParcels();computeVillaPolys();
 renderFull();updateStatusBar();
 setTimeout(()=>{
