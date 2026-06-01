@@ -547,6 +547,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         <button class="re-btn active" data-tool="wall" title="Duvar çiz">&#9473; Duvar</button>
         <button class="re-btn" data-tool="room" title="Oda (dikdörtgen)">&#9633; Oda</button>
         <button class="re-btn" data-tool="door" title="Kapı koy">&#128682; Kapı</button>
+        <button class="re-btn" data-tool="window" title="Pencere (dış duvara) — ekle / kaydır / boyutlandır">&#128459; Pencere</button>
         <button class="re-btn" data-tool="erase" title="Sil" style="color:#C62828">&#128465;</button>
       </div>
       <span class="re-sep"></span>
@@ -582,7 +583,14 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         <span class="panel-arrow">▾</span>
       </div>
       <div class="panel-body">
-      <div class="vs-label">Çatı Terası</div>
+      <div class="vs-label">Hangi Villa (dış tasarım)</div>
+      <div class="vs-grid" id="styleVillaSel" style="grid-template-columns:repeat(2,1fr)">
+        <button class="vs-btn active" data-svilla="A" style="font-size:14px;font-weight:700">A</button>
+        <button class="vs-btn" data-svilla="B" style="font-size:14px;font-weight:700">B</button>
+        <button class="vs-btn" data-svilla="C" style="font-size:14px;font-weight:700">C</button>
+        <button class="vs-btn" data-svilla="all" style="font-size:12px;font-weight:700">Hepsi</button>
+      </div>
+      <div class="vs-label" style="margin-top:6px">Çatı Terası</div>
       <div class="vs-grid" data-floor="roof">
         <button class="vs-btn active" data-style="beton" title="Beton"><div class="vs-swatch" style="background:#D8D0C8"></div>Beton</button>
         <button class="vs-btn" data-style="ahsapdeck" title="Ahsap Deck"><div class="vs-swatch" style="background:repeating-linear-gradient(0deg,#A0724A 0 4px,#6B4226 4px 5px)"></div>Ahsap</button>
@@ -1151,6 +1159,63 @@ function roomData(){
   return STATE.interiors[k][fl];
 }
 
+// ── Exterior windows (editable, constrained to exterior walls) ──
+// Edges of the current floor's footprint (world-2D), indexed the same as the 3D builder.
+function roomFloorEdges(){
+  var fp=roomFloorPoly(); if(!fp)return [];
+  var out=[],n=fp.length;
+  for(var i=0;i<n;i++){var a=fp[i],b=fp[(i+1)%n],dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy)||1;
+    out.push({i:i,ax:a[0],ay:a[1],bx:b[0],by:b[1],dx:dx,dy:dy,len:len,ux:dx/len,uy:dy/len});}
+  return out;
+}
+// Window list to render: the user's edited list if present, else the captured auto list (starting point).
+function roomWindows(){
+  var d=roomData(); if(d.exwin)return d.exwin;
+  var k=STATE.roomEdit.key,fl=STATE.roomEdit.floor;
+  return (villaAutoWin[k]&&villaAutoWin[k][fl])||[];
+}
+// Materialize the auto windows into an editable array on first edit (so the starting set is kept).
+function roomEnsureExwin(){
+  var d=roomData();
+  if(!d.exwin){var k=STATE.roomEdit.key,fl=STATE.roomEdit.floor,auto=(villaAutoWin[k]&&villaAutoWin[k][fl])||[];
+    d.exwin=auto.map(function(w){return {edge:w.edge,t:w.t,width:w.width,sillY:w.sillY,height:w.height};});}
+  return d.exwin;
+}
+function roomWindowCommit(){saveInteriors();renderFull();roomScheduleRebuild();}
+// World endpoints of a window {edge,t,width} on the current floor.
+function roomWinPts(w,edges){
+  var e=edges[w.edge]; if(!e)return null;
+  var half=(w.width/2)/e.len, t0=Math.max(0,w.t-half), t1=Math.min(1,w.t+half);
+  return {e:e,t0:t0,t1:t1,
+    p0:[e.ax+t0*e.dx,e.ay+t0*e.dy], p1:[e.ax+t1*e.dx,e.ay+t1*e.dy],
+    c:[e.ax+w.t*e.dx,e.ay+w.t*e.dy]};
+}
+// Nearest exterior edge to a world point → {edge,t,dist}.
+function roomNearestEdge(mx,my){
+  var edges=roomFloorEdges(),best=null,bestD=1e9;
+  for(var i=0;i<edges.length;i++){var e=edges[i];if(e.len<1)continue;
+    var t=((mx-e.ax)*e.dx+(my-e.ay)*e.dy)/(e.len*e.len); t=Math.max(0,Math.min(1,t));
+    var px=e.ax+t*e.dx,py=e.ay+t*e.dy,d=Math.hypot(px-mx,py-my);
+    if(d<bestD){bestD=d;best={edge:i,t:t,dist:d};}}
+  return best;
+}
+// Hit-test windows at a world point → {idx, mode:'resize'|'move', end} or null.
+function roomWinHit(mx,my){
+  var ws=roomWindows(),edges=roomFloorEdges();
+  for(var i=0;i<ws.length;i++){var pt=roomWinPts(ws[i],edges);if(!pt)continue;
+    if(Math.hypot(pt.p0[0]-mx,pt.p0[1]-my)<0.35)return {idx:i,mode:'resize',end:0};
+    if(Math.hypot(pt.p1[0]-mx,pt.p1[1]-my)<0.35)return {idx:i,mode:'resize',end:1};
+  }
+  for(var j=0;j<ws.length;j++){var p=roomWinPts(ws[j],edges);if(!p)continue;
+    // distance from point to the window segment
+    var vx=p.p1[0]-p.p0[0],vy=p.p1[1]-p.p0[1],L2=vx*vx+vy*vy||1;
+    var tt=Math.max(0,Math.min(1,((mx-p.p0[0])*vx+(my-p.p0[1])*vy)/L2));
+    var qx=p.p0[0]+tt*vx,qy=p.p0[1]+tt*vy;
+    if(Math.hypot(qx-mx,qy-my)<0.4)return {idx:j,mode:'move'};
+  }
+  return null;
+}
+
 var roomUndoStack=[];
 function roomSnapshot(){roomUndoStack.push(JSON.stringify(roomData()));if(roomUndoStack.length>50)roomUndoStack.shift()}
 function roomUndo(){if(!roomUndoStack.length)return;var k=STATE.roomEdit.key,fl=STATE.roomEdit.floor;STATE.interiors[k][fl]=JSON.parse(roomUndoStack.pop());renderFull();roomScheduleRebuild()}
@@ -1252,7 +1317,7 @@ function roomSyncOnShow(){
   renderFull();
 }
 function roomSetHint(){
-  var t=STATE.roomEdit&&STATE.roomEdit.tool,m={wall:'Duvar: sürükleyerek çiz (uçlara/ızgaraya yapışır)',room:'Oda: köşegen sürükle → 4 duvar',door:'Kapı: bir duvara dokun',erase:'Sil: duvara/kapıya dokun'}[t]||'';
+  var t=STATE.roomEdit&&STATE.roomEdit.tool,m={wall:'Duvar: sürükleyerek çiz (uçlara/ızgaraya yapışır)',room:'Oda: köşegen sürükle → 4 duvar',door:'Kapı: bir duvara dokun',window:'Pencere: dış duvara dokun → ekle · gövdeyi sürükle → kaydır · ucu sürükle → boyutlandır',erase:'Sil: duvara / kapıya / pencereye dokun'}[t]||'';
   var el=document.getElementById('roomHint');el.textContent=m;el.classList.add('show');
 }
 
@@ -1286,26 +1351,33 @@ function renderRoomEditor(){
     var scc=polyCentroid(sh),scp=S(scc[0],scc[1]);
     out+='<text x="'+scp[0].toFixed(1)+'" y="'+scp[1].toFixed(1)+'" text-anchor="middle" font-size="6" font-weight="700" fill="#555" opacity=".85">MERDİVEN</text>';
   }
-  // Exterior doors + windows for the current floor, drawn with architectural symbols:
-  //   door = white gap + inward swing leaf + arc (blue);  window = white gap + double line (cyan).
+  // Exterior DOORS for the current floor (reference only) — from captured meta.
   var exo=(villaOpenMeta[v.key]&&villaOpenMeta[v.key][STATE.roomEdit.floor])||[];
   var fc=polyCentroid(fp);
   for(var xi=0;xi<exo.length;xi++){var op=exo[xi];
-    // The F2 balcony/terrace door isn't a real swinging door — show no indicator for it.
-    if(op.type==='door'&&STATE.roomEdit.floor==='f2')continue;
-    var odx=op.x2-op.x1,ody=op.y2-op.y1,odl=Math.hypot(odx,ody)||1,oux=odx/odl,ouy=ody/odl,onx=-ouy,ony=oux;
-    if((fc[0]-op.x1)*onx+(fc[1]-op.y1)*ony<0){onx=-onx;ony=-ony}            // inward normal (toward villa interior)
+    if(op.type!=='door')continue;                                          // windows are drawn (editable) below
+    if(op.type==='door'&&STATE.roomEdit.floor==='f2')continue;             // F2 balcony door: no indicator
+    var odx=op.x2-op.x1,ody=op.y2-op.y1,odl=Math.hypot(odx,ody)||1,onx=-ody/odl,ony=odx/odl;
+    if((fc[0]-op.x1)*onx+(fc[1]-op.y1)*ony<0){onx=-onx;ony=-ony}
     var oa=S(op.x1,op.y1),ob=S(op.x2,op.y2);
     out+='<line x1="'+oa[0].toFixed(1)+'" y1="'+oa[1].toFixed(1)+'" x2="'+ob[0].toFixed(1)+'" y2="'+ob[1].toFixed(1)+'" stroke="#fff" stroke-width="'+(0.30*sc)+'" stroke-linecap="butt"/>';
-    if(op.type==='door'){
-      var leafW=[op.x1+onx*odl,op.y1+ony*odl],lf=S(leafW[0],leafW[1]);
-      out+='<line x1="'+oa[0].toFixed(1)+'" y1="'+oa[1].toFixed(1)+'" x2="'+lf[0].toFixed(1)+'" y2="'+lf[1].toFixed(1)+'" stroke="#1565C0" stroke-width="1.4"/>';
-      out+='<path d="M'+lf[0].toFixed(1)+','+lf[1].toFixed(1)+' A'+(odl*sc).toFixed(1)+','+(odl*sc).toFixed(1)+' 0 0 1 '+ob[0].toFixed(1)+','+ob[1].toFixed(1)+'" fill="none" stroke="#1565C0" stroke-width=".8" stroke-dasharray="2,1.5"/>';
-    }else{
-      var w1a=S(op.x1+onx*0.04,op.y1+ony*0.04),w1b=S(op.x2+onx*0.04,op.y2+ony*0.04);
-      var w2a=S(op.x1-onx*0.04,op.y1-ony*0.04),w2b=S(op.x2-onx*0.04,op.y2-ony*0.04);
-      out+='<line x1="'+w1a[0].toFixed(1)+'" y1="'+w1a[1].toFixed(1)+'" x2="'+w1b[0].toFixed(1)+'" y2="'+w1b[1].toFixed(1)+'" stroke="#0288D1" stroke-width="1.1"/>';
-      out+='<line x1="'+w2a[0].toFixed(1)+'" y1="'+w2a[1].toFixed(1)+'" x2="'+w2b[0].toFixed(1)+'" y2="'+w2b[1].toFixed(1)+'" stroke="#0288D1" stroke-width="1.1"/>';
+    var leafW=[op.x1+onx*odl,op.y1+ony*odl],lf=S(leafW[0],leafW[1]);
+    out+='<line x1="'+oa[0].toFixed(1)+'" y1="'+oa[1].toFixed(1)+'" x2="'+lf[0].toFixed(1)+'" y2="'+lf[1].toFixed(1)+'" stroke="#1565C0" stroke-width="1.4"/>';
+    out+='<path d="M'+lf[0].toFixed(1)+','+lf[1].toFixed(1)+' A'+(odl*sc).toFixed(1)+','+(odl*sc).toFixed(1)+' 0 0 1 '+ob[0].toFixed(1)+','+ob[1].toFixed(1)+'" fill="none" stroke="#1565C0" stroke-width=".8" stroke-dasharray="2,1.5"/>';
+  }
+  // Exterior WINDOWS — editable. Double cyan line on the wall + square end handles (resize grips).
+  var redges=roomFloorEdges(), rwins=roomWindows(), winTool=(STATE.roomEdit.tool==='window');
+  for(var wxi=0;wxi<rwins.length;wxi++){var pt=roomWinPts(rwins[wxi],redges); if(!pt)continue;
+    var e=pt.e, onx=-e.uy, ony=e.ux; if((fc[0]-pt.c[0])*onx+(fc[1]-pt.c[1])*ony<0){onx=-onx;ony=-ony}
+    var a0=S(pt.p0[0],pt.p0[1]), b0=S(pt.p1[0],pt.p1[1]);
+    out+='<line x1="'+a0[0].toFixed(1)+'" y1="'+a0[1].toFixed(1)+'" x2="'+b0[0].toFixed(1)+'" y2="'+b0[1].toFixed(1)+'" stroke="#fff" stroke-width="'+(0.30*sc)+'" stroke-linecap="butt"/>';
+    var wA1=S(pt.p0[0]+onx*0.045,pt.p0[1]+ony*0.045), wB1=S(pt.p1[0]+onx*0.045,pt.p1[1]+ony*0.045);
+    var wA2=S(pt.p0[0]-onx*0.045,pt.p0[1]-ony*0.045), wB2=S(pt.p1[0]-onx*0.045,pt.p1[1]-ony*0.045);
+    out+='<line x1="'+wA1[0].toFixed(1)+'" y1="'+wA1[1].toFixed(1)+'" x2="'+wB1[0].toFixed(1)+'" y2="'+wB1[1].toFixed(1)+'" stroke="#0288D1" stroke-width="1.2"/>';
+    out+='<line x1="'+wA2[0].toFixed(1)+'" y1="'+wA2[1].toFixed(1)+'" x2="'+wB2[0].toFixed(1)+'" y2="'+wB2[1].toFixed(1)+'" stroke="#0288D1" stroke-width="1.2"/>';
+    if(winTool){
+      out+='<rect x="'+(a0[0]-2.4)+'" y="'+(a0[1]-2.4)+'" width="4.8" height="4.8" fill="#fff" stroke="#0288D1" stroke-width="1"/>';
+      out+='<rect x="'+(b0[0]-2.4)+'" y="'+(b0[1]-2.4)+'" width="4.8" height="4.8" fill="#fff" stroke="#0288D1" stroke-width="1"/>';
     }
   }
   // walls
@@ -1349,11 +1421,14 @@ function roomEditDown(e){
     renderFull();
   }else if(tool==='door'){
     roomPlaceDoor(lp);
+  }else if(tool==='window'){
+    roomWindowDown(e);
   }else if(tool==='erase'){
     roomEraseAt(lp);
   }
 }
 function roomEditMove(e){
+  if(STATE.roomEdit.winDrag){roomWindowMove(e);return;}
   if(!STATE.roomEdit.draft)return;
   e.preventDefault();
   var lp=roomPointerLocal(e); if(!lp)return;
@@ -1363,6 +1438,7 @@ function roomEditMove(e){
   renderFull();
 }
 function roomEditUp(e){
+  if(STATE.roomEdit.winDrag){roomWindowUp(e);return;}
   var dr=STATE.roomEdit.draft; if(!dr){return}
   STATE.roomEdit.draft=null;
   var data=roomData();
@@ -1390,9 +1466,46 @@ function roomPlaceDoor(lp){
   var t=Math.max(half,Math.min(1-half,bestT));
   roomSnapshot();data.doors.push({wallIdx:best,t:t,width:dw});roomScheduleRebuild();renderFull();
 }
+// Window tool: grab an existing window (resize end / move body) or add a new one on the nearest exterior wall.
+function roomWindowDown(e){
+  e.preventDefault();
+  var m=getPos(e), hit=roomWinHit(m[0],m[1]);
+  roomSnapshot();
+  var ex=roomEnsureExwin();
+  if(hit){ STATE.roomEdit.winDrag={idx:hit.idx,mode:hit.mode,end:hit.end}; }
+  else{
+    var ne=roomNearestEdge(m[0],m[1]); if(!ne||ne.dist>1.2){STATE.roomEdit.winDrag=null;return;}
+    var e2=roomFloorEdges()[ne.edge], dw=1.2, half=(dw/2)/e2.len;
+    ex.push({edge:ne.edge,t:Math.max(half,Math.min(1-half,ne.t)),width:dw,sillY:0.9});
+    STATE.roomEdit.winDrag={idx:ex.length-1,mode:'move'};
+  }
+  renderFull();
+}
+function roomWindowMove(e){
+  e.preventDefault();
+  var wd=STATE.roomEdit.winDrag, ex=roomData().exwin; if(!wd||!ex)return; var w=ex[wd.idx]; if(!w)return;
+  var m=getPos(e), edges=roomFloorEdges();
+  if(wd.mode==='move'){
+    var ne=roomNearestEdge(m[0],m[1]); if(!ne)return; var e2=edges[ne.edge]; var half=(w.width/2)/e2.len;
+    w.edge=ne.edge; w.t=Math.max(half,Math.min(1-half,ne.t));
+  }else{ // resize: drag one end, keep the other fixed
+    var e2=edges[w.edge]; if(!e2)return;
+    var th=((m[0]-e2.ax)*e2.dx+(m[1]-e2.ay)*e2.dy)/(e2.len*e2.len); th=Math.max(0,Math.min(1,th));
+    var half0=(w.width/2)/e2.len, tOther=(wd.end===0)?(w.t+half0):(w.t-half0);
+    var lo=Math.min(th,tOther), hi=Math.max(th,tOther);
+    w.t=(lo+hi)/2; w.width=Math.max(0.4,(hi-lo)*e2.len);
+    var half=(w.width/2)/e2.len; if(w.t-half<0)w.t=half; if(w.t+half>1)w.t=1-half;
+  }
+  renderFull();
+}
+function roomWindowUp(e){STATE.roomEdit.winDrag=null;roomWindowCommit();}
 function roomEraseAt(lp){
   var data=roomData();
-  // door first
+  // exterior window first (hit-test in world coords)
+  var f=roomFrame();
+  if(f){var wp=localToWorld2D(f,lp[0],lp[1]),hit=roomWinHit(wp[0],wp[1]);
+    if(hit){roomSnapshot();var ex=roomEnsureExwin();ex.splice(hit.idx,1);roomWindowCommit();return;}}
+  // door
   for(var di=0;di<data.doors.length;di++){var d=data.doors[di],w=data.walls[d.wallIdx];if(!w)continue;
     var px=w.u1+d.t*(w.u2-w.u1),py=w.v1+d.t*(w.v2-w.v1);
     if(Math.hypot(px-lp[0],py-lp[1])<0.6){roomSnapshot();data.doors.splice(di,1);roomScheduleRebuild();renderFull();return}
@@ -1422,8 +1535,8 @@ document.getElementById('reUndo').addEventListener('click',roomUndo);
 document.getElementById('reExport').addEventListener('click',exportPlan);
 document.getElementById('reImport').addEventListener('click',function(){document.getElementById('reImportFile').click();});
 document.getElementById('reImportFile').addEventListener('change',function(){if(this.files&&this.files[0])importPlanFile(this.files[0]);this.value='';});
-document.querySelectorAll('#reFloor .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reFloor .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.floor=this.dataset.floor;STATE.roomEdit.draft=null;roomUndoStack=[];var fpz=roomFloorPoly();if(fpz)roomZoomTo(fpz);renderFull()})});
-document.querySelectorAll('#reTool .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reTool .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.tool=this.dataset.tool;STATE.roomEdit.draft=null;roomSetHint();renderFull()})});
+document.querySelectorAll('#reFloor .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reFloor .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.floor=this.dataset.floor;STATE.roomEdit.draft=null;STATE.roomEdit.winDrag=null;roomUndoStack=[];var fpz=roomFloorPoly();if(fpz)roomZoomTo(fpz);renderFull()})});
+document.querySelectorAll('#reTool .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reTool .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.tool=this.dataset.tool;STATE.roomEdit.draft=null;STATE.roomEdit.winDrag=null;roomSetHint();renderFull()})});
 
 // ═══════════════════════════════════════
 // UI LOGIC
@@ -1585,6 +1698,7 @@ var villaFootprints=[]; // {poly: [[wx, wz],...], floorYs: [groundY, F2Y, roofY]
 var villaStairMeta={}; // key -> stair hole rect (4 world-2D corners) or null
 var villaOpenMeta={};  // key -> {f1:[{x1,y1,x2,y2,type}], f2:[...]} exterior door/window segments (world-2D)
 var villaF2Poly={};    // key -> the F2 footprint polygon (world-2D, includes çıkma/cantilever overhang)
+var villaAutoWin={};   // key -> {f1:[{edge,t,width,sillY,height}], f2:[...]} the auto exterior windows (editor's starting point)
 // Capture exterior openings as world-2D segments from an edge list + per-edge opening arrays.
 function captureOpenings(edgesArr, openByEdge){
   var out=[]; if(!openByEdge) return out;
@@ -2079,8 +2193,11 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   var g=new THREE.Group();
   var n=poly2D.length;
   var cent=polyCentroid(poly2D);
-  var vsF1=VILLA_STYLES[STATE.villaStyleF1]||VILLA_STYLES.modern;
-  var vsF2=VILLA_STYLES[STATE.villaStyleF2]||VILLA_STYLES.modern;
+  // Per-villa exterior style (Tasarım): use this villa's override if set, else the global default.
+  var _vst=(villaKey&&STATE.villaStyles&&STATE.villaStyles[villaKey])||{};
+  var styF1=_vst.f1||STATE.villaStyleF1, styF2=_vst.f2||STATE.villaStyleF2, styRoof=_vst.roof||STATE.villaStyleRoof, styTile=_vst.tileAlign||STATE.tileAlignment;
+  var vsF1=VILLA_STYLES[styF1]||VILLA_STYLES.modern;
+  var vsF2=VILLA_STYLES[styF2]||VILLA_STYLES.modern;
   var vs=vsF1; // use F1 style for non-wall elements (glass, railings, slab, door, etc.)
   function makeWallMat(style){
     var props={color:style.wall,roughness:0.85,metalness:0.02,side:THREE.DoubleSide};
@@ -2094,7 +2211,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   var matConcreteSlab=new THREE.MeshStandardMaterial({color:vs.slab,roughness:0.8,metalness:0.03,side:THREE.DoubleSide});
   var matInteriorFloor=new THREE.MeshStandardMaterial({color:0xE8DDD0,roughness:0.85,metalness:0.0,side:THREE.DoubleSide});
   // Roof terrace surface — user-selectable
-  var roofCfg=ROOF_STYLES[STATE.villaStyleRoof]||ROOF_STYLES.beton;
+  var roofCfg=ROOF_STYLES[styRoof]||ROOF_STYLES.beton;
   var matRoofSlab=new THREE.MeshStandardMaterial({color:roofCfg.color,roughness:roofCfg.roughness,metalness:roofCfg.metalness});
   var matWood=new THREE.MeshStandardMaterial({color:vs.wood,roughness:0.65});
   var matWoodDark=new THREE.MeshStandardMaterial({color:vs.woodDark,roughness:0.6});
@@ -2327,31 +2444,42 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   var doorH3=Math.min(2.20,F1-0.80); // standard residential door 2.10-2.20m
   var doorGlassH=Math.min(2.20,F2-0.80);
 
+  // Exterior windows are now data-driven: an AUTO list (the editor's starting point) per floor, which the
+  // user can override via STATE.interiors[key][floor].exwin. Doors stay auto. Un-edited floors render
+  // exactly as before (auto list == old hardcoded positions), so there is no regression.
+  var ux1=(villaKey&&STATE.interiors[villaKey]&&STATE.interiors[villaKey].f1)?STATE.interiors[villaKey].f1.exwin:null;
+  var ux2=(villaKey&&STATE.interiors[villaKey]&&STATE.interiors[villaKey].f2)?STATE.interiors[villaKey].f2.exwin:null;
+  var edited1=!!ux1, edited2=!!ux2;
+  var autoWin1=[], autoWin2=[];
   var openingsF1=[];
   for(var foi=0;foi<n;foi++){
     openingsF1[foi]=[];
     var fe=edges[foi]; if(fe.len<2) continue;
     if(foi===longIdx){
-      // Front edge: bigger window + door + smaller window
-      openingsF1[foi].push({t:bigT, width:fe.len*0.5, height:g1H2, sillY:g1SillY, type:'window'});
+      autoWin1.push({edge:foi, t:bigT, width:fe.len*0.5, height:g1H2, sillY:g1SillY});
       openingsF1[foi].push({t:doorT, width:1.4, height:doorH3, sillY:0, type:'door'});
-      openingsF1[foi].push({t:smallT, width:fe.len*0.2, height:g1H2, sillY:g1SillY, type:'window'});
+      autoWin1.push({edge:foi, t:smallT, width:fe.len*0.2, height:g1H2, sillY:g1SillY});
     }else{
-      openingsF1[foi].push({t:0.5, width:fe.len*0.55, height:g1H2, sillY:g1SillY, type:'window'});
+      autoWin1.push({edge:foi, t:0.5, width:fe.len*0.55, height:g1H2, sillY:g1SillY});
     }
   }
+  var win1=edited1?ux1:autoWin1;
+  win1.forEach(function(w){ if(openingsF1[w.edge]) openingsF1[w.edge].push({t:w.t, width:w.width, height:(w.height||g1H2), sillY:(w.sillY!=null?w.sillY:g1SillY), type:'window'}); });
 
   var openingsF2=[];
   for(var foi2=0;foi2<f2n;foi2++){
     openingsF2[foi2]=[];
     var fe2=f2edges[foi2]; if(fe2.len<2) continue;
     if(foi2===f2longIdx){
-      openingsF2[foi2].push({t:0.2, width:fe2.len*0.22, height:g2H2, sillY:g2SillY, type:'window'});
+      autoWin2.push({edge:foi2, t:0.2, width:fe2.len*0.22, height:g2H2, sillY:g2SillY});
       openingsF2[foi2].push({t:0.6, width:fe2.len*0.3, height:doorGlassH, sillY:0.05, type:'door'});
     }else{
-      openingsF2[foi2].push({t:0.5, width:fe2.len*0.55, height:g2H2, sillY:g2SillY, type:'window'});
+      autoWin2.push({edge:foi2, t:0.5, width:fe2.len*0.55, height:g2H2, sillY:g2SillY});
     }
   }
+  var win2=edited2?ux2:autoWin2;
+  win2.forEach(function(w){ if(openingsF2[w.edge]) openingsF2[w.edge].push({t:w.t, width:w.width, height:(w.height||g2H2), sillY:(w.sillY!=null?w.sillY:g2SillY), type:'window'}); });
+  if(villaKey){ villaAutoWin[villaKey]={f1:autoWin1, f2:autoWin2}; }
 
   // === Build hollow walls with actual openings ===
   buildWallPanels(poly2D, edges, 0, F1, openingsF1, matConcrete, g, 0.22, SUB_H, 'F1');
@@ -2657,7 +2785,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     // Override UVs: either world-aligned (angled on rotated villas) or villa-aligned (tiles parallel to walls)
     var posAttr=tileGeo.getAttribute('position');
     var uvArr=[];
-    var alignVilla=(STATE.tileAlignment==='villa');
+    var alignVilla=(styTile==='villa');
     for(var pi=0;pi<posAttr.count;pi++){
       var wx=posAttr.getX(pi);
       var wy=-posAttr.getZ(pi); // polygon-space y (world Z is negated)
@@ -2690,12 +2818,30 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     g.add(tileMesh);
   })();
 
+  // Generic editable-window builder: glass pane + vertical/horizontal mullions + registered panjur.
+  // Used for floors the user has edited; un-edited floors keep their original bespoke facade below.
+  function buildEdWindow(e, t, width, sillY, height, baseY, floorTag, lit){
+    var faceAngle=Math.atan2(e.nx,-e.ny), gOff=0.06, center=baseY+sillY+height/2;
+    var gMat=lit?matGlassLit:matGlass;
+    var gx=e.ax+t*e.dx+e.nx*gOff, gz=e.ay+t*e.dy+e.ny*gOff;
+    var glass=new THREE.Mesh(new THREE.PlaneGeometry(width,height),gMat);
+    glass.position.set(gx,center,-gz); glass.rotation.y=faceAngle; g.add(glass);
+    registerWindowPane(glass,e,t,width,center,height,faceAngle,gOff,SUB_H,floorTag);
+    var mc=Math.max(2,Math.round(width/2));
+    for(var mi=0;mi<mc;mi++){var mt=(mi+1)/(mc+1), mmx=e.ax+(t-width/e.len*0.5+mt*width/e.len)*e.dx+e.nx*(gOff+0.01), mmz=e.ay+(t-width/e.len*0.5+mt*width/e.len)*e.dy+e.ny*(gOff+0.01);
+      var mv=new THREE.Mesh(new THREE.PlaneGeometry(0.05,height),matFrame); mv.position.set(mmx,center,-mmz); mv.rotation.y=faceAngle; g.add(mv);}
+    var hmx=e.ax+t*e.dx+e.nx*(gOff+0.01), hmz=e.ay+t*e.dy+e.ny*(gOff+0.01);
+    var hm=new THREE.Mesh(new THREE.PlaneGeometry(width,0.05),matFrame); hm.position.set(hmx,center+height*0.15,-hmz); hm.rotation.y=faceAngle; g.add(hm);
+  }
+
   // Floor 1 facade: glass, mullions, front door (uses poly2D edges)
   for(ei=0;ei<n;ei++){var e=edges[ei];if(e.len<2)continue;var faceAngle=Math.atan2(e.nx,-e.ny);var isFront=(ei===longIdx);
     var gMat=isFront?matGlassLit:matGlass,gOff=0.06;
 
+    if(edited1){ if(isFront){ /* door only — windows come from the edited list below */ } else { continue; } }
     if(isFront){
       // === FRONT EDGE: bigger window + door (shifted toward garden) + smaller window ===
+      if(!edited1){
       // Bigger window (existing look)
       var bigW=e.len*0.5;
       var bgx=e.ax+bigT*e.dx+e.nx*gOff, bgz=e.ay+bigT*e.dy+e.ny*gOff;
@@ -2730,6 +2876,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       // Smaller window horizontal mullion
       var shm=new THREE.Mesh(new THREE.PlaneGeometry(smallW,0.05),matFrame);
       shm.position.set(smvX,g1Center+g1H2*0.15,-smvZ);shm.rotation.y=faceAngle;g.add(shm);
+      } // /!edited1
 
       // Front door — hinged pivot for opening/closing in FP mode
       var doorWide=1.2;
@@ -2776,21 +2923,26 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       hm1.position.set(hmx,g1Center+g1H2*0.15,-hmz);hm1.rotation.y=faceAngle;g.add(hm1);
     }
   }
+  // Edited F1 windows (user-placed) — generic builder, glass + mullions + panjur.
+  if(edited1){ win1.forEach(function(w){ var e=edges[w.edge]; if(e&&e.len>=0.5) buildEdWindow(e, w.t, w.width, (w.sillY!=null?w.sillY:g1SillY), (w.height||g1H2), 0, 'F1', (w.edge===longIdx)); }); }
 
   // Floor 2 facade + balcony (uses f2edges — extended cantilever polygon for pentagon)
   for(var f2ei=0;f2ei<f2n;f2ei++){var e=f2edges[f2ei];if(e.len<2)continue;var faceAngle=Math.atan2(e.nx,-e.ny);var isFront=(f2ei===f2longIdx);
     var gMat=isFront?matGlassLit:matGlass,gOff=0.06;
+    if(edited2 && !isFront) continue;                 // edited floor: non-front auto windows replaced by the edited list
+    var f2WindowCenter=f2base+g2Center;
+    if(!edited2){
     // Floor 2 glass — smaller + shifted on front edge (to make room for balcony glass door)
     var g2W=isFront?e.len*0.22:e.len*0.55;
     var g2T=isFront?0.2:0.5;
     var g2cx=e.ax+g2T*e.dx+e.nx*gOff, g2cz=e.ay+g2T*e.dy+e.ny*gOff;
-    var f2WindowCenter=f2base+g2Center;
     var gm2=new THREE.Mesh(new THREE.PlaneGeometry(g2W,g2H2),gMat);gm2.position.set(g2cx,f2WindowCenter,-g2cz);gm2.rotation.y=faceAngle;g.add(gm2);
     registerWindowPane(gm2,e,g2T,g2W,f2WindowCenter,g2H2,faceAngle,gOff,SUB_H,'F2');
     // Floor 2 mullions
     var mullionCountF2=Math.max(2,Math.round(g2W/2));
     for(var mi3=0;mi3<mullionCountF2;mi3++){var mt2=(mi3+1)/(mullionCountF2+1);var m2x=e.ax+(g2T-g2W/e.len*0.5+mt2*g2W/e.len)*e.dx+e.nx*(gOff+0.01);var m2z=e.ay+(g2T-g2W/e.len*0.5+mt2*g2W/e.len)*e.dy+e.ny*(gOff+0.01);
       var mv2=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g2H2),matFrame);mv2.position.set(m2x,f2WindowCenter,-m2z);mv2.rotation.y=faceAngle;g.add(mv2)}
+    } // /!edited2
     // Balcony glass door + balcony slab + railings on floor 2 front edge
     if(isFront){
       var doorGlassW=e.len*0.3,doorGlassH=F2*0.9;var dgx=e.ax+0.6*e.dx+e.nx*(gOff+0.01),dgz=e.ay+0.6*e.dy+e.ny*(gOff+0.01);
@@ -2808,6 +2960,8 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       wallColliders.push({ax:bRailX1,az:-bRailY1,bx:bRailX2,bz:-bRailY2,active:true,floor:'balcRail',yLow:SUB_H+f2base,yHigh:SUB_H+f2base+bRailH});
     }
   }
+  // Edited F2 windows (user-placed) — generic builder, glass + mullions + panjur.
+  if(edited2){ win2.forEach(function(w){ var e=f2edges[w.edge]; if(e&&e.len>=0.5) buildEdWindow(e, w.t, w.width, (w.sillY!=null?w.sillY:g2SillY), (w.height||g2H2), f2base, 'F2', (w.edge===f2longIdx)); }); }
   // Rooftop railing colliders — prevent falling off the roof
   for(var rci=0;rci<f2n;rci++){
     var rce=f2edges[rci];
@@ -3191,7 +3345,7 @@ function buildVillas3D(){
   villaEntries.length=0;
   stairZones.length=0;
   villaFootprints.length=0;
-  villaStairMeta={};villaOpenMeta={};villaF2Poly={};
+  villaStairMeta={};villaOpenMeta={};villaF2Poly={};villaAutoWin={};
   windowPanes.length=0;
   const h=STATE.floorCount*FLOOR_H;
   if(STATE.mode==='free'){
@@ -4343,7 +4497,11 @@ STATE.villaStyleF1='turkstone'; // Bal (Tas Duvar honey)
 STATE.villaStyleF2='woodwide';  // Kaba Ahsap
 STATE.villaStyleRoof='beton';
 STATE.tileAlignment='world'; // 'villa' = aligned with building walls; 'world' = world-axis (angled)
-STATE.fenceWallStyle='koyu'; // outer land boundary fence wall color
+STATE.fenceWallStyle='koyu'; // outer land boundary fence wall color (GLOBAL — land boundary, not per villa)
+// Per-villa exterior styles (Tasarım): each villa can differ. Seeded from the global defaults above.
+STATE.styleVilla='A';
+STATE.villaStyles={};
+['A','B','C'].forEach(function(k){STATE.villaStyles[k]={f1:STATE.villaStyleF1,f2:STATE.villaStyleF2,roof:STATE.villaStyleRoof,tileAlign:STATE.tileAlignment};});
 
 // Roof terrace surface styles
 const ROOF_STYLES={
@@ -4355,17 +4513,36 @@ const ROOF_STYLES={
   terracotta:{color:0xC4785A,roughness:0.85,metalness:0.02}
 };
 
+// Reflect the selected villa's styles in the panel highlights. In "Hepsi" mode, a button is shown
+// active only if all three villas agree on it (otherwise the field reads as mixed → none highlighted).
+function styleFieldVal(field){
+  if(STATE.styleVilla!=='all') return (STATE.villaStyles[STATE.styleVilla]||{})[field];
+  var a=STATE.villaStyles.A[field], same=['A','B','C'].every(function(k){return (STATE.villaStyles[k]||{})[field]===a;});
+  return same?a:' mixed';
+}
+function syncStylePanel(){
+  var map={f1:styleFieldVal('f1'),f2:styleFieldVal('f2'),roof:styleFieldVal('roof'),tileAlign:styleFieldVal('tileAlign')};
+  document.querySelectorAll('#villaStylePicker .vs-grid').forEach(function(grid){
+    var floor=grid.dataset.floor; if(!floor||map[floor]===undefined)return; // skip villa-selector + global fence
+    grid.querySelectorAll('.vs-btn').forEach(function(b){b.classList.toggle('active',b.dataset.style===map[floor]);});
+  });
+  document.querySelectorAll('#styleVillaSel .vs-btn').forEach(function(b){b.classList.toggle('active',b.dataset.svilla===STATE.styleVilla);});
+}
+// Villa A/B/C selector for exterior design.
+document.querySelectorAll('#styleVillaSel .vs-btn').forEach(function(btn){
+  btn.addEventListener('click',function(){STATE.styleVilla=this.dataset.svilla;syncStylePanel();});
+});
 document.querySelectorAll('#villaStylePicker .vs-grid').forEach(function(grid){
-  const floor=grid.dataset.floor; // 'f1', 'f2', or 'roof'
+  const floor=grid.dataset.floor; // 'f1','f2','roof','tileAlign','fence' (villa-selector grid has none → skip)
+  if(!floor)return;
   grid.querySelectorAll('.vs-btn').forEach(function(btn){
     btn.addEventListener('click',function(){
       grid.querySelectorAll('.vs-btn').forEach(function(b){b.classList.remove('active')});
       this.classList.add('active');
-      if(floor==='f1')STATE.villaStyleF1=this.dataset.style;
-      else if(floor==='f2')STATE.villaStyleF2=this.dataset.style;
-      else if(floor==='roof')STATE.villaStyleRoof=this.dataset.style;
-      else if(floor==='tileAlign')STATE.tileAlignment=this.dataset.style;
-      else if(floor==='fence'){STATE.fenceWallStyle=this.dataset.style;if(STATE.view==='3d'&&threeInited)buildLandFence(STATE.fenceWallStyle);return}
+      if(floor==='fence'){STATE.fenceWallStyle=this.dataset.style;if(STATE.view==='3d'&&threeInited)buildLandFence(STATE.fenceWallStyle);return}
+      var val=this.dataset.style, keys=(STATE.styleVilla==='all')?['A','B','C']:[STATE.styleVilla];
+      keys.forEach(function(kk){var sv=STATE.villaStyles[kk]||(STATE.villaStyles[kk]={});
+        if(floor==='f1')sv.f1=val; else if(floor==='f2')sv.f2=val; else if(floor==='roof')sv.roof=val; else if(floor==='tileAlign')sv.tileAlign=val;});
       if(STATE.view==='3d'&&threeInited)buildVillas3D();
     });
   });
