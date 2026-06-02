@@ -548,7 +548,14 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         <button class="re-btn" data-tool="room" title="Oda (dikdörtgen)">&#9633; Oda</button>
         <button class="re-btn" data-tool="door" title="Kapı koy">&#128682; Kapı</button>
         <button class="re-btn" data-tool="window" title="Pencere (dış duvara) — ekle / kaydır / boyutlandır">&#128459; Pencere</button>
+        <button class="re-btn" data-tool="stair" title="Merdiven taşı (F1 içinde) — duvara sürükle · dokun: yön çevir">&#129521; Merdiven</button>
         <button class="re-btn" data-tool="erase" title="Sil" style="color:#C62828">&#128465;</button>
+      </div>
+      <div class="re-group" id="reStairStyle" style="display:none">
+        <button class="re-btn" data-sstyle="U" title="U merdiven — yarım dönüş (sahanlıklı)">U</button>
+        <button class="re-btn" data-sstyle="L" title="L merdiven — çeyrek dönüş">L</button>
+        <button class="re-btn" data-sstyle="straight" title="Düz merdiven — tek uzun kol">Düz</button>
+        <button class="re-btn" data-sstyle="spiral" title="Sarmal merdiven — kompakt">Sarmal</button>
       </div>
       <span class="re-sep"></span>
       <button class="re-btn" id="reUndo" title="Geri al">&#8630;</button>
@@ -1216,6 +1223,148 @@ function roomWinHit(mx,my){
   return null;
 }
 
+// ── Stair MOVE (ODA Merdiven tool) — wall-backed; mirrors the builder's placement math ──
+// Per-villa stair style: 'U' (default, half-turn switchback) or 'L' (quarter turn). Stored on the interior plan.
+function villaStairStyle(key){return (key&&STATE.interiors&&STATE.interiors[key]&&STATE.interiors[key].stairStyle)||'U';}
+function roomStairParams(){
+  // Style-aware footprint, mirroring computeStair. U: aligned switchback (dir [−back,front]).
+  // L: quarter turn — 6-vertex hexagon (samples/hexLocal in local a=dir, p=perp-toward-centroid).
+  var F1=STATE.floorCount*FLOOR_H*0.5, SLAB2=0.22;
+  var stepCount=Math.max(4,Math.round((F1+SLAB2)/0.175)), f1Steps=Math.ceil(stepCount/2), f2Steps=stepCount-f1Steps;
+  var f1Run=f1Steps*0.28, w=1.0;
+  var st=villaStairStyle(STATE.roomEdit&&STATE.roomEdit.key);
+  if(st==='L'){
+    var f2t=f2Steps*0.28, Lh=w/2, Lax=f1Run+w, Lbz=w/2+f2t;
+    return {style:'L', stairW:w, front:Lax, back:0, stairLen:Lax, alongMargin:0.40, perpMarginAdj:w/2+0.11,
+      samples:[[-0.05,-Lh-0.05],[Lax+0.05,-Lh-0.05],[Lax+0.05,Lbz+0.05],[f1Run-0.05,Lbz+0.05],[f1Run,Lh],[-0.05,Lh+0.05],[Lax*0.5,0],[f1Run+Lh,Lbz*0.5],[f1Run+Lh,Lh]],
+      hexLocal:[[0,-Lh],[Lax,-Lh],[Lax,Lbz],[f1Run,Lbz],[f1Run,Lh],[0,Lh]]};
+  }
+  if(st==='straight'){
+    var sw=w*1.2, Srun=stepCount*0.28, Sh=sw/2;   // 20% wider than U/L
+    return {style:'straight', stairW:sw, front:Srun, back:0, stairLen:Srun, alongMargin:0.40, perpMarginAdj:sw/2+0.11,
+      samples:[[-0.05,-Sh-0.05],[Srun+0.05,-Sh-0.05],[Srun+0.05,Sh+0.05],[-0.05,Sh+0.05],[Srun*0.5,0],[Srun*0.5,-Sh*0.6],[Srun*0.5,Sh*0.6]],
+      hexLocal:[[0,-Sh],[Srun,-Sh],[Srun,Sh],[0,Sh]]};
+  }
+  if(st==='spiral'){
+    var holeR=1.30+0.12, segN=12, hex=[], sm=[[0,0]];
+    for(var sk=0;sk<segN;sk++){var aa=(sk+0.5)*2*Math.PI/segN; hex.push([holeR*Math.cos(aa),holeR*Math.sin(aa)]); sm.push([(holeR-0.05)*Math.cos(aa),(holeR-0.05)*Math.sin(aa)]);}
+    return {style:'spiral', stairW:2*holeR, front:holeR, back:holeR, stairLen:2*holeR, alongMargin:0.40, perpMarginAdj:holeR+0.11, samples:sm, hexLocal:hex};
+  }
+  var landingDepth=0.28+1.00, landingCenter=(f1Run-(f2Steps-0.5)*0.28)/2;
+  var back=Math.max(0, landingDepth/2-landingCenter);
+  return {style:'U', stairW:w, front:f1Run, back:back, stairLen:f1Run+back, alongMargin:0.40, perpMarginAdj:w/2+0.11};
+}
+// Footprint corners in 2D world: hexagon for L, rect for U. (sx,sy)=flight-1 origin; (fdx,fdy)=flight dir; (pdx,pdy)=inward perp.
+function stairFootprintCorners(sx,sy,fdx,fdy,pdx,pdy){
+  var P=roomStairParams();
+  if(P.hexLocal) return P.hexLocal.map(function(q){return [sx+q[0]*fdx+q[1]*pdx, sy+q[0]*fdy+q[1]*pdy];});
+  var w=P.stairW, F=P.front, B=P.back;
+  return [[sx-B*fdx-(w/2)*pdx,sy-B*fdy-(w/2)*pdy],[sx+F*fdx-(w/2)*pdx,sy+F*fdy-(w/2)*pdy],[sx+F*fdx+(1.5*w)*pdx,sy+F*fdy+(1.5*w)*pdy],[sx-B*fdx+(1.5*w)*pdx,sy-B*fdy+(1.5*w)*pdy]];
+}
+function roomStairFits(poly,sx,sy,fdx,fdy,enx,eny){
+  var P=roomStairParams(), w=P.stairW, F=P.front, B=P.back, pdX=-enx, pdY=-eny;
+  var pts=P.samples||[[-B-0.05,-w/2-0.05],[F+0.1,-w/2-0.05],[-B-0.05,1.5*w+0.05],[F+0.1,1.5*w+0.05],[F*0.5,0],[F*0.5,w],[F,w*0.5],[-B,w*0.5]];
+  for(var k=0;k<pts.length;k++){var px=sx+pts[k][0]*fdx+pts[k][1]*pdX, py=sy+pts[k][0]*fdy+pts[k][1]*pdY; if(!pointInPoly2D(px,py,poly))return false;}
+  return true;
+}
+function roomStairGroundEdges(){
+  var v=roomVilla(); if(!v)return []; var fp=v.poly, n=fp.length, cx=0,cy=0, out=[];
+  for(var j=0;j<n;j++){cx+=fp[j][0];cy+=fp[j][1];} cx/=n; cy/=n;
+  for(var i=0;i<n;i++){var a=fp[i],b=fp[(i+1)%n],dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len,mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;
+    if((mx+nx-cx)*(mx+nx-cx)+(my+ny-cy)*(my+ny-cy)<(mx-nx-cx)*(mx-nx-cx)+(my-ny-cy)*(my-ny-cy)){nx=-nx;ny=-ny;} // outward normal
+    out.push({i:i,ax:a[0],ay:a[1],bx:b[0],by:b[1],ux:dx/len,uy:dy/len,nx:nx,ny:ny,len:len});}
+  return out;
+}
+function roomStairSolve(e,center,flip){
+  var P=roomStairParams(), L=P.stairLen, w=P.stairW, am=P.alongMargin, pm=P.perpMarginAdj, F=P.front, B=P.back;
+  if(!e || e.len<L+2*am) return null;
+  var cd=Math.max(L/2+am, Math.min(e.len-L/2-am, center*e.len)), startOff=(F-B)/2, sx,sy,fdx,fdy;
+  // start (flight-1 origin, dir 0) sits startOff ahead of the footprint centre cd
+  if(flip){ var sa=cd-startOff; sx=e.ax+sa*e.ux+(-e.nx)*pm; sy=e.ay+sa*e.uy+(-e.ny)*pm; fdx=e.ux; fdy=e.uy; }
+  else    { var sb=cd+startOff; sx=e.ax+sb*e.ux+(-e.nx)*pm; sy=e.ay+sb*e.uy+(-e.ny)*pm; fdx=-e.ux; fdy=-e.uy; }
+  var pdX=-e.nx, pdY=-e.ny;
+  var corners=stairFootprintCorners(sx,sy,fdx,fdy,pdX,pdY);   // hexagon for L, rect for U
+  var v=roomVilla(), fits=v?roomStairFits(v.poly,sx,sy,fdx,fdy,e.nx,e.ny):false;
+  return {center:cd/e.len,flip:flip,corners:corners,fits:fits,sx:sx,sy:sy,fdx:fdx,fdy:fdy,pdx:pdX,pdy:pdY,L:L,w:w,front:F,back:B,style:P.style};
+}
+// Non-U overlay (L / straight): grey wall side (v0→v1) + orange board edge (vLast→v0) with a GİRİŞ arrow.
+function lStairOverlaySVG(o){
+  var c=o.corners.map(function(p){return S(p[0],p[1]);}), out='', last=o.corners.length-1;
+  out+='<line x1="'+c[0][0].toFixed(1)+'" y1="'+c[0][1].toFixed(1)+'" x2="'+c[1][0].toFixed(1)+'" y2="'+c[1][1].toFixed(1)+'" stroke="#555" stroke-width="'+(0.16*sc)+'" stroke-linecap="round"/>';
+  out+='<line x1="'+c[last][0].toFixed(1)+'" y1="'+c[last][1].toFixed(1)+'" x2="'+c[0][0].toFixed(1)+'" y2="'+c[0][1].toFixed(1)+'" stroke="#E65100" stroke-width="'+(0.14*sc)+'" stroke-linecap="round"/>';
+  var bx=(o.corners[last][0]+o.corners[0][0])/2, by=(o.corners[last][1]+o.corners[0][1])/2;   // board edge midpoint (a≈0)
+  var tail=S(bx-0.8*o.fdx,by-0.8*o.fdy), head=S(bx+0.2*o.fdx,by+0.2*o.fdy);              // arrow points into the stair (+dir)
+  out+='<line x1="'+tail[0].toFixed(1)+'" y1="'+tail[1].toFixed(1)+'" x2="'+head[0].toFixed(1)+'" y2="'+head[1].toFixed(1)+'" stroke="#E65100" stroke-width="1.6"/>';
+  var ang=Math.atan2(head[1]-tail[1],head[0]-tail[0]);
+  out+='<path d="M'+head[0].toFixed(1)+','+head[1].toFixed(1)+' L'+(head[0]-7*Math.cos(ang-0.4)).toFixed(1)+','+(head[1]-7*Math.sin(ang-0.4)).toFixed(1)+' L'+(head[0]-7*Math.cos(ang+0.4)).toFixed(1)+','+(head[1]-7*Math.sin(ang+0.4)).toFixed(1)+' Z" fill="#E65100"/>';
+  out+='<text x="'+tail[0].toFixed(1)+'" y="'+(tail[1]-3).toFixed(1)+'" text-anchor="middle" font-size="6.5" font-weight="700" fill="#E65100">GİRİŞ</text>';
+  return out;
+}
+// Spiral overlay: central pole dot + a GİRİŞ arrow on the inward rim pointing toward the centre.
+function spiralOverlaySVG(o){
+  var cc=polyCentroid(o.corners), cp=S(cc[0],cc[1]), out='';
+  var pdx=o.pdx||0, pdy=o.pdy||0, R=(o.front!=null?o.front:1.4);
+  var ex=o.sx+R*pdx, ey=o.sy+R*pdy;                                  // inward rim (entry / board edge)
+  var tail=S(ex+0.45*pdx,ey+0.45*pdy), head=S(ex-0.45*pdx,ey-0.45*pdy);   // points toward the centre
+  out+='<line x1="'+tail[0].toFixed(1)+'" y1="'+tail[1].toFixed(1)+'" x2="'+head[0].toFixed(1)+'" y2="'+head[1].toFixed(1)+'" stroke="#E65100" stroke-width="1.6"/>';
+  var ang=Math.atan2(head[1]-tail[1],head[0]-tail[0]);
+  out+='<path d="M'+head[0].toFixed(1)+','+head[1].toFixed(1)+' L'+(head[0]-7*Math.cos(ang-0.4)).toFixed(1)+','+(head[1]-7*Math.sin(ang-0.4)).toFixed(1)+' L'+(head[0]-7*Math.cos(ang+0.4)).toFixed(1)+','+(head[1]-7*Math.sin(ang+0.4)).toFixed(1)+' Z" fill="#E65100"/>';
+  out+='<text x="'+tail[0].toFixed(1)+'" y="'+(tail[1]-3).toFixed(1)+'" text-anchor="middle" font-size="6.5" font-weight="700" fill="#E65100">GİRİŞ</text>';
+  out+='<circle cx="'+cp[0].toFixed(1)+'" cy="'+cp[1].toFixed(1)+'" r="'+(0.18*sc).toFixed(1)+'" fill="#9a958c" stroke="#777" stroke-width="1"/>';
+  return out;
+}
+// SVG overlay for a stair footprint: wall side (grey), ENTRY side (orange + GİRİŞ), tread hatching.
+function stairOverlaySVG(o){
+  if(o.style==='spiral') return spiralOverlaySVG(o);
+  if(o.style==='L'||o.style==='straight') return lStairOverlaySVG(o);
+  var c=o.corners.map(function(p){return S(p[0],p[1]);}), out='';
+  // wall side = corners 0→1 (perp −w/2, against the wall); entry side = corners 1→2 (the open dirMax end)
+  out+='<line x1="'+c[0][0].toFixed(1)+'" y1="'+c[0][1].toFixed(1)+'" x2="'+c[1][0].toFixed(1)+'" y2="'+c[1][1].toFixed(1)+'" stroke="#555" stroke-width="'+(0.16*sc)+'" stroke-linecap="round"/>';
+  out+='<line x1="'+c[1][0].toFixed(1)+'" y1="'+c[1][1].toFixed(1)+'" x2="'+c[2][0].toFixed(1)+'" y2="'+c[2][1].toFixed(1)+'" stroke="#E65100" stroke-width="'+(0.14*sc)+'" stroke-linecap="round"/>';
+  // tread hatch (k along the flight)
+  for(var k=1;k<=6;k++){var f=k/7,a=[o.corners[0][0]+f*(o.corners[1][0]-o.corners[0][0]),o.corners[0][1]+f*(o.corners[1][1]-o.corners[0][1])],b=[o.corners[3][0]+f*(o.corners[2][0]-o.corners[3][0]),o.corners[3][1]+f*(o.corners[2][1]-o.corners[3][1])];var sa=S(a[0],a[1]),sb=S(b[0],b[1]);out+='<line x1="'+sa[0].toFixed(1)+'" y1="'+sa[1].toFixed(1)+'" x2="'+sb[0].toFixed(1)+'" y2="'+sb[1].toFixed(1)+'" stroke="#888" stroke-width=".6" opacity=".7"/>';}
+  // GİRİŞ arrow at the entry (front/dirMax end, boarding/inner lane), pointing into the stair (−flight dir)
+  var _F=(o.front!=null?o.front:o.L);
+  var ex=o.sx+_F*o.fdx+o.w*o.pdx, ey=o.sy+_F*o.fdy+o.w*o.pdy;
+  var tail=S(ex+0.7*o.fdx,ey+0.7*o.fdy), head=S(ex,ey);
+  out+='<line x1="'+tail[0].toFixed(1)+'" y1="'+tail[1].toFixed(1)+'" x2="'+head[0].toFixed(1)+'" y2="'+head[1].toFixed(1)+'" stroke="#E65100" stroke-width="1.6"/>';
+  var ang=Math.atan2(head[1]-tail[1],head[0]-tail[0]);
+  out+='<path d="M'+head[0].toFixed(1)+','+head[1].toFixed(1)+' L'+(head[0]-7*Math.cos(ang-0.4)).toFixed(1)+','+(head[1]-7*Math.sin(ang-0.4)).toFixed(1)+' L'+(head[0]-7*Math.cos(ang+0.4)).toFixed(1)+','+(head[1]-7*Math.sin(ang+0.4)).toFixed(1)+' Z" fill="#E65100"/>';
+  out+='<text x="'+tail[0].toFixed(1)+'" y="'+(tail[1]-3).toFixed(1)+'" text-anchor="middle" font-size="6.5" font-weight="700" fill="#E65100">GİRİŞ</text>';
+  return out;
+}
+function roomStairNearest(mx,my){
+  var edges=roomStairGroundEdges(), best=null, bestD=1e9;
+  edges.forEach(function(ed){var t=((mx-ed.ax)*ed.ux+(my-ed.ay)*ed.uy)/ed.len; t=Math.max(0,Math.min(1,t)); var px=ed.ax+t*ed.len*ed.ux,py=ed.ay+t*ed.len*ed.uy,d=Math.hypot(px-mx,py-my); if(d<bestD){bestD=d;best={edge:ed.i,center:t};}});
+  return best;
+}
+function roomStairDown(e){
+  e.preventDefault(); var m=getPos(e), ne=roomStairNearest(m[0],m[1]); if(!ne)return;
+  // Start from the current stair (override, else the auto-resolved placement) so a tap flips it in place;
+  // a drag re-targets to the nearest wall.
+  var cur=(STATE.interiors[STATE.roomEdit.key]&&STATE.interiors[STATE.roomEdit.key].stair)||villaStairInfo[STATE.roomEdit.key];
+  STATE.roomEdit.stairDrag = (cur&&cur.edge!=null) ? {edge:cur.edge,center:cur.center,flip:cur.flip,moved:false,dx:m[0],dy:m[1]}
+                                 : {edge:ne.edge,center:ne.center,flip:true,moved:false,dx:m[0],dy:m[1]};
+  renderFull();
+}
+function roomStairMove(e){
+  e.preventDefault(); var sd=STATE.roomEdit.stairDrag; if(!sd)return;
+  var m=getPos(e);
+  if(Math.hypot(m[0]-sd.dx,m[1]-sd.dy)>0.35){var ne=roomStairNearest(m[0],m[1]); if(ne){sd.edge=ne.edge;sd.center=ne.center;sd.moved=true;}} // ignore small jitter so a tap still flips
+  renderFull();
+}
+function roomStairUp(e){
+  var sd=STATE.roomEdit.stairDrag; if(!sd){return} STATE.roomEdit.stairDrag=null;
+  if(!sd.moved) sd.flip=!sd.flip;                                    // a tap (no drag) flips the entry direction
+  var edges=roomStairGroundEdges(), ed=edges[sd.edge], sol=roomStairSolve(ed,sd.center,sd.flip);
+  if(sol && !sol.fits){var alt=roomStairSolve(ed,sd.center,!sd.flip); if(alt&&alt.fits){sd.flip=!sd.flip;sol=alt;}}
+  if(sol && sol.fits){
+    var d=STATE.interiors[STATE.roomEdit.key]||(STATE.interiors[STATE.roomEdit.key]={});
+    d.stair={edge:sd.edge,center:sol.center,flip:sd.flip}; saveInteriors();
+    if(threeInited)buildVillas3D(); renderFull(); roomHintMsg('Merdiven taşındı');
+  }else{ renderFull(); roomHintMsg('Buraya sığmıyor — geçerli bir duvara sürükle'); }
+}
+
 var roomUndoStack=[];
 function roomSnapshot(){roomUndoStack.push(JSON.stringify(roomData()));if(roomUndoStack.length>50)roomUndoStack.shift()}
 function roomUndo(){if(!roomUndoStack.length)return;var k=STATE.roomEdit.key,fl=STATE.roomEdit.floor;STATE.interiors[k][fl]=JSON.parse(roomUndoStack.pop());renderFull();roomScheduleRebuild()}
@@ -1317,8 +1466,17 @@ function roomSyncOnShow(){
   renderFull();
 }
 function roomSetHint(){
-  var t=STATE.roomEdit&&STATE.roomEdit.tool,m={wall:'Duvar: sürükleyerek çiz (uçlara/ızgaraya yapışır)',room:'Oda: köşegen sürükle → 4 duvar',door:'Kapı: bir duvara dokun',window:'Pencere: dış duvara dokun → ekle · gövdeyi sürükle → kaydır · ucu sürükle → boyutlandır',erase:'Sil: duvara / kapıya / pencereye dokun'}[t]||'';
+  var t=STATE.roomEdit&&STATE.roomEdit.tool,m={wall:'Duvar: sürükleyerek çiz (uçlara/ızgaraya yapışır)',room:'Oda: köşegen sürükle → 4 duvar',door:'Kapı: bir duvara dokun',window:'Pencere: dış duvara dokun → ekle · gövdeyi sürükle → kaydır · ucu sürükle → boyutlandır',stair:'Merdiven: bir duvara sürükle → taşı (yeşil=sığar) · dokun → yön çevir · sadece F1 içinde',erase:'Sil: duvara / kapıya / pencereye dokun'}[t]||'';
   var el=document.getElementById('roomHint');el.textContent=m;el.classList.add('show');
+  roomSyncStairStyleUI();
+}
+// Show the U/L stair-style picker only while the Merdiven tool is active; reflect the current villa's style.
+function roomSyncStairStyleUI(){
+  var grp=document.getElementById('reStairStyle'); if(!grp)return;
+  var isStair=STATE.roomEdit&&STATE.roomEdit.tool==='stair';
+  grp.style.display=isStair?'flex':'none';
+  var st=villaStairStyle(STATE.roomEdit&&STATE.roomEdit.key);
+  grp.querySelectorAll('.re-btn').forEach(function(b){b.classList.toggle('active',b.dataset.sstyle===st);});
 }
 
 // ---- Editor rendering (SVG overlay in the same zoomed viewBox) ----
@@ -1343,13 +1501,25 @@ function renderRoomEditor(){
   var sh=villaStairMeta[v.key];
   if(sh&&sh.length>=4){
     out+='<polygon points="'+ps(sh)+'" fill="rgba(110,110,110,.16)" stroke="#777" stroke-width="'+(0.06*sc)+'" stroke-dasharray="3,2"/>';
-    for(var hi=1;hi<7;hi++){var tt=hi/7;
+    if(sh.length===4) for(var hi=1;hi<7;hi++){var tt=hi/7;   // rect (U) only: across-flight tread hatch
       var pa=S(sh[0][0]+tt*(sh[1][0]-sh[0][0]),sh[0][1]+tt*(sh[1][1]-sh[0][1]));
       var pb=S(sh[3][0]+tt*(sh[2][0]-sh[3][0]),sh[3][1]+tt*(sh[2][1]-sh[3][1]));
       out+='<line x1="'+pa[0].toFixed(1)+'" y1="'+pa[1].toFixed(1)+'" x2="'+pb[0].toFixed(1)+'" y2="'+pb[1].toFixed(1)+'" stroke="#888" stroke-width=".6" opacity=".6"/>';
     }
     var scc=polyCentroid(sh),scp=S(scc[0],scc[1]);
     out+='<text x="'+scp[0].toFixed(1)+'" y="'+scp[1].toFixed(1)+'" text-anchor="middle" font-size="6" font-weight="700" fill="#555" opacity=".85">MERDİVEN</text>';
+  }
+  // Stair MOVE: ghost (during a drag) or the committed stair's entry indicator (when the stair tool is on).
+  if(STATE.roomEdit.stairDrag){
+    var sd=STATE.roomEdit.stairDrag, sEd=roomStairGroundEdges()[sd.edge], sSol=sEd?roomStairSolve(sEd,sd.center,sd.flip):null;
+    if(sSol){ out+='<polygon points="'+ps(sSol.corners)+'" fill="'+(sSol.fits?'rgba(45,106,79,.18)':'rgba(198,40,40,.18)')+'" stroke="'+(sSol.fits?'#2D6A4F':'#C62828')+'" stroke-width="'+(0.08*sc)+'" stroke-dasharray="4,3"/>'; out+=stairOverlaySVG(sSol); }
+  }else if(STATE.roomEdit.tool==='stair'){
+    var info=villaStairInfo[v.key];
+    if(info){var w2=info.w, F2=(info.front!=null?info.front:info.L), B2=(info.back!=null?info.back:0);
+      var ic=(info.style&&info.style!=='U')
+        ? stairFootprintCorners(info.sx,info.sy,info.fdx,info.fdy,info.pdx,info.pdy)
+        : [[info.sx-B2*info.fdx-(w2/2)*info.pdx,info.sy-B2*info.fdy-(w2/2)*info.pdy],[info.sx+F2*info.fdx-(w2/2)*info.pdx,info.sy+F2*info.fdy-(w2/2)*info.pdy],[info.sx+F2*info.fdx+(1.5*w2)*info.pdx,info.sy+F2*info.fdy+(1.5*w2)*info.pdy],[info.sx-B2*info.fdx+(1.5*w2)*info.pdx,info.sy-B2*info.fdy+(1.5*w2)*info.pdy]];
+      out+=stairOverlaySVG({corners:ic,sx:info.sx,sy:info.sy,fdx:info.fdx,fdy:info.fdy,pdx:info.pdx,pdy:info.pdy,L:info.L,w:info.w,front:F2,back:B2,style:info.style});}
   }
   // Exterior DOORS for the current floor (reference only) — from captured meta.
   var exo=(villaOpenMeta[v.key]&&villaOpenMeta[v.key][STATE.roomEdit.floor])||[];
@@ -1423,11 +1593,14 @@ function roomEditDown(e){
     roomPlaceDoor(lp);
   }else if(tool==='window'){
     roomWindowDown(e);
+  }else if(tool==='stair'){
+    roomStairDown(e);
   }else if(tool==='erase'){
     roomEraseAt(lp);
   }
 }
 function roomEditMove(e){
+  if(STATE.roomEdit.stairDrag){roomStairMove(e);return;}
   if(STATE.roomEdit.winDrag){roomWindowMove(e);return;}
   if(!STATE.roomEdit.draft)return;
   e.preventDefault();
@@ -1438,6 +1611,7 @@ function roomEditMove(e){
   renderFull();
 }
 function roomEditUp(e){
+  if(STATE.roomEdit.stairDrag){roomStairUp(e);return;}
   if(STATE.roomEdit.winDrag){roomWindowUp(e);return;}
   var dr=STATE.roomEdit.draft; if(!dr){return}
   STATE.roomEdit.draft=null;
@@ -1535,8 +1709,16 @@ document.getElementById('reUndo').addEventListener('click',roomUndo);
 document.getElementById('reExport').addEventListener('click',exportPlan);
 document.getElementById('reImport').addEventListener('click',function(){document.getElementById('reImportFile').click();});
 document.getElementById('reImportFile').addEventListener('change',function(){if(this.files&&this.files[0])importPlanFile(this.files[0]);this.value='';});
-document.querySelectorAll('#reFloor .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reFloor .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.floor=this.dataset.floor;STATE.roomEdit.draft=null;STATE.roomEdit.winDrag=null;roomUndoStack=[];var fpz=roomFloorPoly();if(fpz)roomZoomTo(fpz);renderFull()})});
-document.querySelectorAll('#reTool .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reTool .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.tool=this.dataset.tool;STATE.roomEdit.draft=null;STATE.roomEdit.winDrag=null;roomSetHint();renderFull()})});
+document.querySelectorAll('#reFloor .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reFloor .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.floor=this.dataset.floor;STATE.roomEdit.draft=null;STATE.roomEdit.winDrag=null;STATE.roomEdit.stairDrag=null;roomUndoStack=[];var fpz=roomFloorPoly();if(fpz)roomZoomTo(fpz);renderFull()})});
+document.querySelectorAll('#reTool .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reTool .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.tool=this.dataset.tool;STATE.roomEdit.draft=null;STATE.roomEdit.winDrag=null;STATE.roomEdit.stairDrag=null;roomSetHint();renderFull()})});
+document.querySelectorAll('#reStairStyle .re-btn').forEach(function(b){b.addEventListener('click',function(){
+  var key=STATE.roomEdit&&STATE.roomEdit.key; if(!key)return;
+  var d=STATE.interiors[key]||(STATE.interiors[key]={});
+  d.stairStyle=this.dataset.sstyle; saveInteriors();
+  roomSyncStairStyleUI();
+  if(threeInited)buildVillas3D(); renderFull();
+  roomHintMsg('Merdiven stili: '+this.dataset.sstyle);
+})});
 
 // ═══════════════════════════════════════
 // UI LOGIC
@@ -1699,6 +1881,7 @@ var villaStairMeta={}; // key -> stair hole rect (4 world-2D corners) or null
 var villaOpenMeta={};  // key -> {f1:[{x1,y1,x2,y2,type}], f2:[...]} exterior door/window segments (world-2D)
 var villaF2Poly={};    // key -> the F2 footprint polygon (world-2D, includes çıkma/cantilever overhang)
 var villaAutoWin={};   // key -> {f1:[{edge,t,width,sillY,height}], f2:[...]} the auto exterior windows (editor's starting point)
+var villaStairInfo={}; // key -> {edge,center,flip, sx,sy,fdx,fdy,pdx,pdy,L,w} resolved stair placement (for ODA move + entry arrow)
 // Capture exterior openings as world-2D segments from an edge list + per-edge opening arrays.
 function captureOpenings(edgesArr, openByEdge){
   var out=[]; if(!openByEdge) return out;
@@ -1943,13 +2126,14 @@ function buildUStair(startX,startZ,totalRise,dirX,dirZ,width,localBaseY,worldLif
   var f1Run=f1Steps*stepTread;
   var f2Run=f2Steps*stepTread;
   var perpX=flipPerp?dirZ:-dirZ, perpZ=flipPerp?-dirX:dirX;
-  var landingDepth=stepTread+0.40;
+  var landingDepth=stepTread+1.00;          // generous turn landing (lab-validated: STEP_TREAD + 1.0)
   var landingWidth=2*width;
   var localLandingY=localBaseY+f1Steps*stepRise;
   // Position A (slot 1): starts at startX/startZ, goes +dir, at perp=0
   var posAx=startX, posAz=startZ, posAdirX=dirX, posAdirZ=dirZ;
-  // Position B (slot 2): at high-dir end, perp=+width, goes -dir
-  var f2StartDir=f1Run+landingDepth-stepTread*1.5;
+  // Position B (slot 2): perp=+width, goes -dir. ALIGNED with the upper flight (both span dir [0, f1Run]),
+  // so the U-turn lands cleanly instead of the upper flight overhanging the lower (lab fix).
+  var f2StartDir=f1Run;
   var posBx=startX+f2StartDir*dirX+width*perpX;
   var posBz=startZ+f2StartDir*dirZ+width*perpZ;
   var posBdirX=-dirX, posBdirZ=-dirZ;
@@ -1984,6 +2168,81 @@ function buildUStair(startX,startZ,totalRise,dirX,dirZ,width,localBaseY,worldLif
     stairZones.push({cx:topPos.x,cz:topPos.z,dirX:topPos.dirX,dirZ:topPos.dirZ,runLen:topRun,width:width,baseY:wLand,topY:wTop,floor:floorTag+'_f2'});
   }
   return {totalDir:f1Run+landingDepth, totalPerp:2*width, f1Run:f1Run, landingDepth:landingDepth, landingY:localLandingY, startX:startX, startZ:startZ, dirX:dirX, dirZ:dirZ, width:width};
+}
+
+// L-shaped (quarter-turn) stair — ported from stairs-lab.html buildL into build-space.
+// Flight 1 climbs along +dir (perp centred 0); a w×w landing; flight 2 climbs along +perp (inward),
+// its treads spanning the same dir slot as the landing. Same (startX,startZ,dirX,dirZ,flipPerp)
+// convention as buildUStair, so +perp(build) points INWARD — matching the hole hexagon.
+function buildLStair(startX,startZ,totalRise,dirX,dirZ,width,localBaseY,worldLiftY,mat,group,floorTag,flipPerp){
+  if(totalRise<0.1)return null;
+  var stepRise=0.175, stepTread=0.28;
+  var stepCount=Math.max(4,Math.round(totalRise/stepRise)); stepRise=totalRise/stepCount;
+  var f1Steps=Math.ceil(stepCount/2), f2Steps=stepCount-f1Steps, run1=f1Steps*stepTread;
+  var perpX=flipPerp?dirZ:-dirZ, perpZ=flipPerp?-dirX:dirX;
+  var localLandingY=localBaseY+f1Steps*stepRise;
+  // Flight 1: from the start, along +dir, centred on perp=0.
+  buildStairFlight(startX,startZ,localBaseY,dirX,dirZ,f1Steps,stepRise,stepTread,width,mat,group);
+  // Landing: w×w square at dir∈[run1,run1+w], perp∈[-w/2,w/2] (centre dir=run1+w/2, perp 0).
+  var landDirC=run1+width/2;
+  var landCX=startX+landDirC*dirX, landCZ=startZ+landDirC*dirZ;
+  var land=new THREE.Mesh(new THREE.BoxGeometry(width,0.06,width),mat);
+  land.position.set(landCX,localLandingY-0.03,landCZ); land.rotation.y=Math.atan2(dirX,dirZ);
+  land.castShadow=true; land.receiveShadow=true; group.add(land);
+  // Flight 2: climbs along +perp (inward), starting at dir=run1+w/2, perp=w/2 (first tread at perp=w/2+½tread).
+  var f2sx=startX+landDirC*dirX+(width/2)*perpX, f2sz=startZ+landDirC*dirZ+(width/2)*perpZ;
+  buildStairFlight(f2sx,f2sz,localLandingY,perpX,perpZ,f2Steps,stepRise,stepTread,width,mat,group);
+  if(floorTag){
+    var wBase=worldLiftY+localBaseY, wLand=worldLiftY+localLandingY, wTop=worldLiftY+localBaseY+totalRise;
+    stairZones.push({cx:startX,cz:startZ,dirX:dirX,dirZ:dirZ,runLen:run1,width:width,baseY:wBase,topY:wLand,floor:floorTag+'_f1'});
+    stairZones.push({cx:startX+run1*dirX,cz:startZ+run1*dirZ,dirX:dirX,dirZ:dirZ,runLen:width,width:width,baseY:wLand,topY:wLand,floor:floorTag+'_land'});
+    stairZones.push({cx:f2sx,cz:f2sz,dirX:perpX,dirZ:perpZ,runLen:f2Steps*stepTread,width:width,baseY:wLand,topY:wTop,floor:floorTag+'_f2'});
+  }
+  return {run1:run1, landingY:localLandingY};
+}
+
+// Straight stair — a single flight climbing the full storey along +dir (perp centred 0). flipPerp unused
+// (the footprint is symmetric about perp=0). Same call signature as buildLStair for uniform dispatch.
+function buildStraightStair(startX,startZ,totalRise,dirX,dirZ,width,localBaseY,worldLiftY,mat,group,floorTag,flipPerp){
+  if(totalRise<0.1)return null;
+  var stepRise=0.175, stepTread=0.28;
+  var stepCount=Math.max(4,Math.round(totalRise/stepRise)); stepRise=totalRise/stepCount;
+  buildStairFlight(startX,startZ,localBaseY,dirX,dirZ,stepCount,stepRise,stepTread,width,mat,group);
+  if(floorTag){
+    stairZones.push({cx:startX,cz:startZ,dirX:dirX,dirZ:dirZ,runLen:stepCount*stepTread,width:width,baseY:worldLiftY+localBaseY,topY:worldLiftY+localBaseY+totalRise,floor:floorTag+'_f1'});
+  }
+  return {run:stepCount*stepTread};
+}
+
+// Spiral stair — central pole + radial treads winding ~2.6π over the storey (ported from stairs-lab).
+// The footprint is a circle centred at (startX,startZ); the entry faces +perp (inward, toward the room),
+// so the first tread is placed at the inward bearing. FP walk uses ONE angle-based spiral zone (below):
+// height is a function of the bearing around the pole, with multiple wraps disambiguated by current Y —
+// a single linear-ramp zone can't model a helix, and many overlapping ones make the floor-picker jump.
+var SPIRAL_INNER_R=0.18, SPIRAL_OUTER_R=1.30, SPIRAL_TURN=2.6*Math.PI;
+var SPIRAL_ENTRY_OFF=Math.PI/3;   // tangential entry: gap sits this far before the first tread / after the last
+function buildSpiralStair(startX,startZ,totalRise,dirX,dirZ,width,localBaseY,worldLiftY,mat,group,floorTag,flipPerp){
+  if(totalRise<0.1)return null;
+  var stepCount=Math.max(4,Math.round(totalRise/0.175)), stepRise=totalRise/stepCount;
+  var innerR=SPIRAL_INNER_R, outerR=SPIRAL_OUTER_R, midR=(innerR+outerR)/2;
+  var aStep=SPIRAL_TURN/stepCount, dirSign=flipPerp?-1:1;
+  var perpX=flipPerp?dirZ:-dirZ, perpZ=flipPerp?-dirX:dirX;   // +perp = inward (toward room)
+  var baseAng=Math.atan2(perpZ,perpX);                         // first tread faces inward (the entry side)
+  // Central pole
+  var pole=new THREE.Mesh(new THREE.CylinderGeometry(innerR,innerR,totalRise+0.2,16),mat);
+  pole.position.set(startX,localBaseY+totalRise/2,startZ); pole.castShadow=true; pole.receiveShadow=true; group.add(pole);
+  for(var i=0;i<stepCount;i++){
+    var th=baseAng+dirSign*i*aStep;
+    var t=new THREE.Mesh(new THREE.BoxGeometry(outerR-innerR,0.06,0.42),mat);
+    t.position.set(startX+Math.cos(th)*midR, localBaseY+(i+1)*stepRise-0.03, startZ+Math.sin(th)*midR);
+    t.rotation.y=-th; t.castShadow=true; t.receiveShadow=true; group.add(t);
+  }
+  if(floorTag){
+    stairZones.push({spiral:true, cx:startX, cz:startZ, innerR:innerR, outerR:outerR,
+      baseAng:baseAng, dirSign:dirSign, totalAngle:SPIRAL_TURN,
+      baseY:worldLiftY+localBaseY, riseTotal:totalRise, stepRise:stepRise, floor:floorTag});
+  }
+  return {outerR:outerR};
 }
 
 // Compute the 4 corners (2D poly coords) of the stair hole rectangle for floor cuts.
@@ -2502,13 +2761,57 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   // === Compute stair placement (against a non-cantilever wall, adjacent on both floors) ===
   var stairW=1.0;
   var stairPlacement=null;
-  var stairHoleRect2D=null;
+  var stairHoleRect2D=null;      // U only: 4-corner rect (kept for the validated U wall/tower code)
+  var stairHolePoly2D=null;      // general hole polygon driving ALL slab/floor/tile cuts (rect for U, hexagon for L)
   (function computeStair(){
     var stepCount=Math.max(4,Math.round((F1+SLAB2)/0.175));
     var f1Steps=Math.ceil(stepCount/2);
-    var stairLen=f1Steps*0.28+0.68;
+    var f2Steps=stepCount-f1Steps, f1Run=f1Steps*0.28;
+    // Aligned U (matches buildUStair): upper flight spans dir [0, f1Run]; landing centred at the low-dir turn.
+    var landingDepthC=0.28+1.00, f2StartDirC=f1Run;
+    var landingCenterC=(f2StartDirC-(f2Steps-0.5)*0.28)/2;
+    var landingBack=Math.max(0, landingDepthC/2 - landingCenterC); // how far the landing reaches behind the start (−dir)
+    var stairLen=f1Run+landingBack;   // full footprint dir extent (front = flights to f1Run, back = landing)
     var perpMarginAdj=stairW/2+0.11;  // flight 1 outer edge flush to building wall inner face
     var alongMargin=0.40;             // small offset from corner
+
+    // ── Style-aware footprint (local a=dir, p=perp toward centroid) ──
+    // fpFront/fpBack: dir extent ahead/behind the start. fpSamples: points tested for in-villa fit.
+    // fpHoleLocal: the hole polygon (null → U uses its rect path below). fpBoardEdge/fpExitEdge index fpHoleLocal.
+    var style=villaStairStyle(villaKey);
+    var f2t=f2Steps*0.28;
+    var fpFront, fpBack, fpSamples=null, fpHoleLocal=null, fpBoardEdge=-1, fpExitEdge=-1;
+    if(style==='L'){
+      var Lh=stairW/2, Lax=f1Run+stairW, Lbz=stairW/2+f2t;   // bottom-arm length, vertical-arm reach
+      fpFront=Lax; fpBack=0;
+      // 6 hexagon verts + 3 interior/edge samples (catches the deep inward vertical arm)
+      fpSamples=[[-0.05,-Lh-0.05],[Lax+0.05,-Lh-0.05],[Lax+0.05,Lbz+0.05],[f1Run-0.05,Lbz+0.05],[f1Run,Lh],[-0.05,Lh+0.05],[Lax*0.5,0],[f1Run+Lh,Lbz*0.5],[f1Run+Lh,Lh]];
+      var Lm=0.04;   // outer-edge margin; inner edges (a=run1, p=w/2) kept tight to preserve the kept floor quadrant
+      fpHoleLocal=[[-Lm,-Lh-Lm],[Lax+Lm,-Lh-Lm],[Lax+Lm,Lbz+Lm],[f1Run,Lbz+Lm],[f1Run,Lh],[-Lm,Lh]];
+      fpBoardEdge=5;   // edge v5→v0 (a≈0, bottom of flight 1): open in the shaft so you can board on F1/F2
+      fpExitEdge=2;    // edge v2→v3 (top of flight 2): the roof exit → tower door
+    }else if(style==='straight'){
+      var Sw=stairW*1.2, Srun=stepCount*0.28, Sh=Sw/2;   // one long flight, full storey — 20% wider than U/L
+      perpMarginAdj=Sw/2+0.11;                            // keep the wider flight flush to the wall
+      fpFront=Srun; fpBack=0;
+      fpSamples=[[-0.05,-Sh-0.05],[Srun+0.05,-Sh-0.05],[Srun+0.05,Sh+0.05],[-0.05,Sh+0.05],[Srun*0.5,0],[Srun*0.5,-Sh*0.6],[Srun*0.5,Sh*0.6]];
+      var Sm=0.04;
+      fpHoleLocal=[[-Sm,-Sh-Sm],[Srun+Sm,-Sh-Sm],[Srun+Sm,Sh+Sm],[-Sm,Sh+Sm]];   // 1-lane rectangle
+      fpBoardEdge=3;   // edge v3→v0 (a≈0, bottom of the flight): board on F1/F2
+      fpExitEdge=1;    // edge v1→v2 (a=run, top of the flight): roof exit → tower door
+    }else if(style==='spiral'){
+      var holeR=SPIRAL_OUTER_R+0.12, segN=12;             // circular hole (12-gon clears the treads)
+      perpMarginAdj=holeR+0.11;                           // start = circle centre; rim ~0.11 from wall
+      fpFront=holeR; fpBack=holeR;                        // startOff=0 → start sits at the footprint centre
+      fpHoleLocal=[]; fpSamples=[[0,0]];
+      for(var sgi=0;sgi<segN;sgi++){ var aa=(sgi+0.5)*2*Math.PI/segN;
+        fpHoleLocal.push([holeR*Math.cos(aa), holeR*Math.sin(aa)]);
+        fpSamples.push([(holeR-0.05)*Math.cos(aa), (holeR-0.05)*Math.sin(aa)]); }
+      // board+exit = the rim edge facing +p (inward, toward the room) — the entry gap / roof door
+      var bI=0,bD=-1e9; for(var bi=0;bi<segN;bi++){ var q1=fpHoleLocal[bi], q2=fpHoleLocal[(bi+1)%segN]; var my=(q1[1]+q2[1])/2; if(my>bD){bD=my;bI=bi;} }
+      fpBoardEdge=bI; fpExitEdge=bI;
+    }else{ fpFront=f1Run; fpBack=landingBack; }
+    stairLen=fpFront+fpBack;
 
     function inside(x,y){return pointInPoly2D(x,y,poly2D)}
     // Check if the U-stair footprint fits inside the polygon.
@@ -2516,11 +2819,12 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     // This is independent of flight direction; stair stays on the inside side of the wall.
     function fitsAt(sx,sy,fdX,fdY,enx,eny){
       var pdX=-enx, pdY=-eny;
-      var pts=[
-        [-0.1,-stairW/2-0.05],[stairLen+0.1,-stairW/2-0.05],
-        [-0.1,1.5*stairW+0.05],[stairLen+0.1,1.5*stairW+0.05],
-        [stairLen*0.5,0],[stairLen*0.5,stairW],
-        [stairLen,stairW*0.5],[0,stairW*0.5]
+      // U footprint dir range = [−landingBack, f1Run]; L uses its hexagon samples (fpSamples).
+      var pts=fpSamples||[
+        [-landingBack-0.05,-stairW/2-0.05],[f1Run+0.1,-stairW/2-0.05],
+        [-landingBack-0.05,1.5*stairW+0.05],[f1Run+0.1,1.5*stairW+0.05],
+        [f1Run*0.5,0],[f1Run*0.5,stairW],
+        [f1Run,stairW*0.5],[-landingBack,stairW*0.5]
       ];
       for(var k=0;k<pts.length;k++){
         var px=sx+pts[k][0]*fdX+pts[k][1]*pdX;
@@ -2544,6 +2848,22 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     candidates.sort(function(a,b){return b.score-a.score});
 
     var sx,sy,fdX2D,fdY2D,stairFlipPerp=false, stairEdgeIdx=-1, found=false;
+    // ── User MOVE override (ODA Merdiven tool): {edge, center 0..1 along that edge, flip} ──
+    // Reuses the EXACT auto formula below (same perp/flip/hole semantics), so only the wall + offset
+    // change. Wall-backed by design. Falls back to auto if it doesn't fit (villa never breaks).
+    var _ov=(villaKey&&STATE.interiors[villaKey]&&STATE.interiors[villaKey].stair)||null;
+    if(_ov && edges[_ov.edge] && edges[_ov.edge].len>=stairLen+2*alongMargin){
+      var eo=edges[_ov.edge];
+      var cd=Math.max(stairLen/2+alongMargin, Math.min(eo.len-stairLen/2-alongMargin, (_ov.center!=null?_ov.center:0.5)*eo.len));
+      var startOff=(fpFront-fpBack)/2; // the flight-1 start sits this far ahead of the footprint centre
+      if(_ov.flip){
+        var saO=cd-startOff, sxo=eo.ax+saO*eo.ux+(-eo.nx)*perpMarginAdj, syo=eo.ay+saO*eo.uy+(-eo.ny)*perpMarginAdj;
+        if(fitsAt(sxo,syo,eo.ux,eo.uy,eo.nx,eo.ny)){sx=sxo;sy=syo;fdX2D=eo.ux;fdY2D=eo.uy;stairFlipPerp=true;stairEdgeIdx=_ov.edge;found=true;}
+      }else{
+        var saA=cd+startOff, sxa=eo.ax+saA*eo.ux+(-eo.nx)*perpMarginAdj, sya=eo.ay+saA*eo.uy+(-eo.ny)*perpMarginAdj;
+        if(fitsAt(sxa,sya,-eo.ux,-eo.uy,eo.nx,eo.ny)){sx=sxa;sy=sya;fdX2D=-eo.ux;fdY2D=-eo.uy;stairFlipPerp=false;stairEdgeIdx=_ov.edge;found=true;}
+      }
+    }
     for(var ci=0;ci<candidates.length && !found;ci++){
       var e0=edges[candidates[ci].idx];
       // Preferred: start at the edge's ax vertex, flight runs along the edge in +e.u direction.
@@ -2569,13 +2889,41 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       stairFlipPerp=false;
     }
 
+    // Inward 2D perp (toward centroid), derived from flipPerp so it matches the builder's +perp side.
+    // 2D→world is (x,z)=(x2D,−y2D); buildUStair/buildLStair put the turn/inward arm on +perp(build).
+    var pdx2D=(stairFlipPerp?-1:1)*fdY2D, pdy2D=(stairFlipPerp?-1:1)*(-fdX2D);
+    if(fpHoleLocal){   // any non-U style (L / straight / spiral): hole = its footprint polygon
+      stairHolePoly2D=fpHoleLocal.map(function(q){return [sx+q[0]*fdX2D+q[1]*pdx2D, sy+q[0]*fdY2D+q[1]*pdy2D];});
+      stairHoleRect2D=null;
+      stairPlacement={sx2D:sx,sy2D:sy,fdX2D:fdX2D,fdY2D:fdY2D,flipPerp:stairFlipPerp,swapYHalves:true,edgeIdx:stairEdgeIdx,fits:found,style:style,boardEdge:fpBoardEdge,exitEdge:fpExitEdge};
+      if(style==='spiral'){
+        // Align board (bottom tread) + exit (top tread) edges to where the helix actually starts/ends, using
+        // the builder's exact WORLD math then mapping back to 2D — robust against any local↔world reflection.
+        var spMidR=(SPIRAL_INNER_R+SPIRAL_OUTER_R)/2, spSeg=stairHolePoly2D.length;
+        var wDX=fdX2D, wDZ=-fdY2D, wPX=stairFlipPerp?wDZ:-wDZ, wPZ=stairFlipPerp?-wDX:wDX;
+        var spBase=Math.atan2(wPZ,wPX), spSign=stairFlipPerp?-1:1, spAStep=SPIRAL_TURN/stepCount;
+        var spHcx=0,spHcy=0; for(var sh=0;sh<spSeg;sh++){spHcx+=stairHolePoly2D[sh][0];spHcy+=stairHolePoly2D[sh][1];} spHcx/=spSeg;spHcy/=spSeg;
+        var spEdgeAtBearing=function(th){
+          var tX=sx+Math.cos(th)*spMidR, tY=sy-Math.sin(th)*spMidR;   // point in 2D coords (world X=x2D, Z=−y2D)
+          var tang=Math.atan2(tY-spHcy,tX-spHcx), best=0,bd=1e9;
+          for(var e=0;e<spSeg;e++){var m1=stairHolePoly2D[e],m2=stairHolePoly2D[(e+1)%spSeg];
+            var ea=Math.atan2((m1[1]+m2[1])/2-spHcy,(m1[0]+m2[0])/2-spHcx);
+            var d=Math.abs(Math.atan2(Math.sin(ea-tang),Math.cos(ea-tang))); if(d<bd){bd=d;best=e;}}
+          return best;
+        };
+        // Entry/exit are TANGENTIAL: gap sits ~a third of a turn BEFORE the first tread (the side its rise
+        // faces) and AFTER the last tread, so you walk up across the steps instead of along them.
+        stairPlacement.boardEdge=spEdgeAtBearing(spBase - spSign*SPIRAL_ENTRY_OFF);
+        stairPlacement.exitEdge =spEdgeAtBearing(spBase + spSign*(SPIRAL_TURN - spAStep + SPIRAL_ENTRY_OFF));
+      }
+    }else{
     // Compute the actual stair footprint extent — must include both flights and the landing.
     // Mirror the constants used by buildUStair so hole matches the real stair.
     var f2StepsCalc=stepCount-f1Steps;
     var f1RunCalc=f1Steps*0.28;
     var f2RunCalc=f2StepsCalc*0.28;
-    var landingDepthCalc=0.28+0.40;
-    var f2StartDirCalc=f1RunCalc+landingDepthCalc-0.28*1.5;
+    var landingDepthCalc=landingDepthC;       // wider landing (matches buildUStair)
+    var f2StartDirCalc=f1RunCalc;             // aligned upper flight (matches buildUStair)
     // Swapped layout: landing center = (bottom flight last-step center dir)/2
     var landingCenterCalc=(f2StartDirCalc-(f2StepsCalc-0.5)*0.28)/2;
     var landingMinDir=landingCenterCalc-landingDepthCalc/2;
@@ -2594,17 +2942,25 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     var holePerpMin=stairFlipPerp?-1.5*stairW-holeMargin:-stairW/2-holeMargin;
     var holePerpMax=stairFlipPerp?stairW/2+holeMargin:1.5*stairW+holeMargin;
     stairHoleRect2D=makeStairHoleRect2D(sx,sy,fdX2D,fdY2D,holeDirMin,holeDirMax,holePerpMin,holePerpMax);
-    stairPlacement={sx2D:sx,sy2D:sy,fdX2D:fdX2D,fdY2D:fdY2D,flipPerp:stairFlipPerp,swapYHalves:true,edgeIdx:stairEdgeIdx,fits:found};
+    stairHolePoly2D=stairHoleRect2D;
+    stairPlacement={sx2D:sx,sy2D:sy,fdX2D:fdX2D,fdY2D:fdY2D,flipPerp:stairFlipPerp,swapYHalves:true,edgeIdx:stairEdgeIdx,fits:found,style:'U'};
+    }
+    // Capture the resolved placement for the ODA move tool + entry arrow.
+    if(villaKey){var _se=edges[stairEdgeIdx], _so=(fpFront-fpBack)/2;
+      if(_se){var _mx=sx+_so*fdX2D,_my=sy+_so*fdY2D,_al=((_mx-_se.ax)*_se.ux+(_my-_se.ay)*_se.uy);  // footprint centre projected onto the edge
+        villaStairInfo[villaKey]={edge:stairEdgeIdx,center:_al/_se.len,flip:stairFlipPerp,sx:sx,sy:sy,fdx:fdX2D,fdy:fdY2D,pdx:-_se.nx,pdy:-_se.ny,L:stairLen,w:stairW,front:fpFront,back:fpBack,style:style};}
+      else villaStairInfo[villaKey]=null;
+    }
   })();
   // Expose the real stair footprint (the stairwell opening) + exterior openings to the 2D ODA editor.
   if(villaKey){
-    villaStairMeta[villaKey]=stairHoleRect2D?stairHoleRect2D.slice():null;
+    villaStairMeta[villaKey]=stairHolePoly2D?stairHolePoly2D.slice():null;
     villaOpenMeta[villaKey]={f1:captureOpenings(edges,openingsF1),f2:captureOpenings(f2edges,openingsF2)};
     villaF2Poly[villaKey]=f2poly?f2poly.slice():null;
   }
 
   // Floor 2 walls + slabs (use f2poly for cantilever effect; mid-slab creates visible overhang ceiling)
-  mvPolySlab(f2poly,F1,SLAB2,matConcreteSlab,stairHoleRect2D?[stairHoleRect2D]:null);
+  mvPolySlab(f2poly,F1,SLAB2,matConcreteSlab,stairHolePoly2D?[stairHolePoly2D]:null);
   buildWallPanels(f2poly, f2edges, f2base, F2, openingsF2, matConcreteF2, g, 0.22, SUB_H, 'F2');
   if(villaKey) buildInteriorWalls(g, poly2D, villaKey, 'f2', f2base, F2, SUB_H, matConcreteF2, matDoor, 'F2int');
 
@@ -2614,10 +2970,10 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     sh.moveTo(f2poly[0][0],f2poly[0][1]);
     for(var si=1;si<f2poly.length;si++)sh.lineTo(f2poly[si][0],f2poly[si][1]);
     sh.closePath();
-    if(stairHoleRect2D){
+    if(stairHolePoly2D){
       var hp=new THREE.Path();
-      hp.moveTo(stairHoleRect2D[0][0],stairHoleRect2D[0][1]);
-      for(var hj=1;hj<stairHoleRect2D.length;hj++) hp.lineTo(stairHoleRect2D[hj][0],stairHoleRect2D[hj][1]);
+      hp.moveTo(stairHolePoly2D[0][0],stairHolePoly2D[0][1]);
+      for(var hj=1;hj<stairHolePoly2D.length;hj++) hp.lineTo(stairHolePoly2D[hj][0],stairHolePoly2D[hj][1]);
       hp.closePath();
       sh.holes.push(hp);
     }
@@ -2649,6 +3005,62 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     var f1DirX=stairPlacement.fdX2D;
     var f1DirZ=-stairPlacement.fdY2D;
     var flipPerp=stairPlacement.flipPerp;
+
+    // ── NON-U branch (L / straight): flights + a generalized poly-edge shaft/tower ──
+    // Shaft (ground→roof): wall every hole edge EXCEPT the board+exit edges (open so you board/arrive on F1/F2).
+    // Tower (roof terrace): wall every edge, with a door on the exit edge. No U-only F1 half-wall.
+    var nuStyle=stairPlacement.style;
+    if((nuStyle==='L'||nuStyle==='straight'||nuStyle==='spiral') && stairHolePoly2D){
+      var buildFlights=(nuStyle==='L')?buildLStair:(nuStyle==='spiral')?buildSpiralStair:buildStraightStair;
+      var bw=(nuStyle==='straight')?stairW*1.2:stairW;   // straight is 20% wider; spiral ignores width
+      buildFlights(startWX, startWZ, F1+SLAB2, f1DirX, f1DirZ, bw, 0,      SUB_H, matConcreteSlab, g, 'F1toF2',  flipPerp);
+      buildFlights(startWX, startWZ, F2+SLAB2, f1DirX, f1DirZ, bw, f2base, SUB_H, matConcreteSlab, g, 'F2toRoof', flipPerp);
+      var Lpoly=stairHolePoly2D, Ln=Lpoly.length;
+      var LhcX=0, LhcY=0; for(var li=0;li<Ln;li++){LhcX+=Lpoly[li][0];LhcY+=Lpoly[li][1];} LhcX/=Ln; LhcY/=Ln;
+      function lWall(x1,y1,x2,y2,yBottom,height,thick,collFloor){
+        var len=Math.hypot(x2-x1,y2-y1); if(len<0.1) return;
+        var midX=(x1+x2)/2, midY=(y1+y2)/2, nx=LhcX-midX, ny=LhcY-midY, nL=Math.hypot(nx,ny)||1; nx/=nL; ny/=nL;
+        midX+=thick*0.5*nx; midY+=thick*0.5*ny;
+        var w=new THREE.Mesh(new THREE.BoxGeometry(len,height,thick),matConcrete);
+        w.position.set(midX,yBottom+height/2,-midY); w.rotation.y=Math.atan2(y2-y1,x2-x1);
+        w.castShadow=true; w.receiveShadow=true; g.add(w);
+        wallColliders.push({ax:x1,az:-y1,bx:x2,bz:-y2,active:true,floor:collFloor,yLow:SUB_H+yBottom,yHigh:SUB_H+yBottom+height});
+      }
+      // A tower edge with a centred auto-open door (the roof exit).
+      function lTowerDoor(x1,y1,x2,y2,twBottom,twH,twThick){
+        var dx=x2-x1, dy=y2-y1, L=Math.hypot(dx,dy);
+        if(L<0.3){ lWall(x1,y1,x2,y2,twBottom,twH,twThick,'stairtower'); return; }
+        var dw=Math.min(0.9,L-0.08), t0=0.5-(dw/2)/L, t1=0.5+(dw/2)/L, doorH=Math.min(2.05,twH-0.12);
+        var nx=LhcX-((x1+x2)/2), ny=LhcY-((y1+y2)/2), nL=Math.hypot(nx,ny)||1; nx/=nL; ny/=nL;
+        function seg(ta,tb,yLow,yHigh){
+          var sl=(tb-ta)*L; if(sl<0.01) return; var sh=yHigh-yLow; if(sh<0.01) return;
+          var mt=(ta+tb)/2, mx=x1+mt*dx+twThick*0.5*nx, my=y1+mt*dy+twThick*0.5*ny;
+          var w=new THREE.Mesh(new THREE.BoxGeometry(sl,sh,twThick),matConcrete);
+          w.position.set(mx,twBottom+yLow+sh/2,-my); w.rotation.y=Math.atan2(dy,dx);
+          w.castShadow=true; w.receiveShadow=true; g.add(w);
+          wallColliders.push({ax:x1+ta*dx,az:-(y1+ta*dy),bx:x1+tb*dx,bz:-(y1+tb*dy),active:true,floor:'stairtower',yLow:SUB_H+twBottom+yLow,yHigh:SUB_H+twBottom+yHigh});
+        }
+        seg(0,t0,0,twH); seg(t1,1,0,twH); seg(t0,t1,doorH,twH);   // jambs + lintel
+        var ux=dx/L, uy=dy/L, hx=x1+t0*dx, hy=y1+t0*dy, ex=x1+t1*dx, ey=y1+t1*dy;
+        var emx=(x1+x2)/2-LhcX, emy=(y1+y2)/2-LhcY, swing=(((-uy)*emx+ux*emy)>0)?1:-1;   // swing outward onto the terrace
+        var piv=buildHingedDoor(hx,twBottom+doorH/2,-hy,dw,doorH,Math.atan2(uy,ux),swing,matDoor,g);
+        var col={ax:hx,az:-hy,bx:ex,bz:-ey,active:true,floor:'stairtower',yLow:SUB_H+twBottom,yHigh:SUB_H+twBottom+doorH,isDoor:true};
+        wallColliders.push(col); piv.userData.collider=col;
+      }
+      var Lboard=stairPlacement.boardEdge, Lexit=stairPlacement.exitEdge;
+      var twH=2.3, twBottom=roofYv;
+      for(var le=0; le<Ln; le++){
+        var a=Lpoly[le], b=Lpoly[(le+1)%Ln];
+        // Shaft (ground→roof): open BOTH the board edge (F1/F2 boarding) AND the exit edge (F2 arrival /
+        // climbs to roof). A quarter turn boards and arrives on different edges, unlike the U switchback.
+        if(le!==Lboard && le!==Lexit) lWall(a[0],a[1],b[0],b[1],0,roofYv,0.15,'stairwell');
+        if(le===Lexit)  lTowerDoor(a[0],a[1],b[0],b[1],twBottom,twH,0.15);       // tower door on exit edge
+        else            lWall(a[0],a[1],b[0],b[1],twBottom,twH,0.15,'stairtower');// tower: solid elsewhere
+      }
+      mvPolySlab(Lpoly, twBottom+twH, 0.18, matConcrete);   // tower roof cap
+      return;
+    }
+
     // swapYHalves=true → first step is at the FAR end of the stair wall (not next to
     // the perpendicular small edge/corner); top landing ends near the small edge.
     buildUStair(startWX, startWZ, F1+SLAB2, f1DirX, f1DirZ, stairW, 0, SUB_H, matConcreteSlab, g, 'F1toF2', flipPerp, true);
@@ -2766,17 +3178,17 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     }
   })();
 
-  mvPolySlab(f2poly,f2base+F2,SLAB2,matRoofSlab,stairHoleRect2D?[stairHoleRect2D]:null);
+  mvPolySlab(f2poly,f2base+F2,SLAB2,matRoofSlab,stairHolePoly2D?[stairHolePoly2D]:null);
   // Rooftop ceramic tile surface — 60x60cm tiles, tinted with the selected roof style color
   (function addRooftopTiles(){
     var sh=new THREE.Shape();
     sh.moveTo(f2poly[0][0],f2poly[0][1]);
     for(var si=1;si<f2poly.length;si++)sh.lineTo(f2poly[si][0],f2poly[si][1]);
     sh.closePath();
-    if(stairHoleRect2D){
+    if(stairHolePoly2D){
       var hp=new THREE.Path();
-      hp.moveTo(stairHoleRect2D[0][0],stairHoleRect2D[0][1]);
-      for(var hj=1;hj<stairHoleRect2D.length;hj++) hp.lineTo(stairHoleRect2D[hj][0],stairHoleRect2D[hj][1]);
+      hp.moveTo(stairHolePoly2D[0][0],stairHolePoly2D[0][1]);
+      for(var hj=1;hj<stairHolePoly2D.length;hj++) hp.lineTo(stairHolePoly2D[hj][0],stairHolePoly2D[hj][1]);
       hp.closePath();
       sh.holes.push(hp);
     }
@@ -3345,7 +3757,7 @@ function buildVillas3D(){
   villaEntries.length=0;
   stairZones.length=0;
   villaFootprints.length=0;
-  villaStairMeta={};villaOpenMeta={};villaF2Poly={};villaAutoWin={};
+  villaStairMeta={};villaOpenMeta={};villaF2Poly={};villaAutoWin={};villaStairInfo={};
   windowPanes.length=0;
   const h=STATE.floorCount*FLOOR_H;
   if(STATE.mode==='free'){
@@ -4078,6 +4490,29 @@ function fpFloorYAt(x,z,curY){
   var bestStairY=null, bestStairDist=Infinity;
   for(var i=0;i<stairZones.length;i++){
     var s=stairZones[i];
+    if(s.spiral){
+      // Angle-based helix: height rises with the bearing travelled around the pole. The spiral wraps
+      // >360°, so a bearing maps to several heights (rel, rel+2π, …) — pick the one nearest current feet.
+      var srx=x-s.cx, srz=z-s.cz, srad=Math.hypot(srx,srz);
+      if(srad>=s.innerR-0.1 && srad<=s.outerR+0.10){
+        var twoPi=2*Math.PI;
+        var ang=Math.atan2(srz,srx);
+        var rel=((s.dirSign*(ang-s.baseAng))%twoPi+twoPi)%twoPi;   // → [0,2π)
+        for(var w=0; rel+w*twoPi<=s.totalAngle+0.3; w++){
+          var ny=s.baseY+((rel+w*twoPi)/s.totalAngle)*s.riseTotal;
+          var dy=Math.abs(ny-feetY);
+          if(dy<bestStairDist){bestStairDist=dy;bestStairY=ny;}
+        }
+        // Flat entry apron: from the tangential gap (~ENTRY_OFF before the first tread) forward to the first
+        // tread, the floor stays at baseY so you walk in across it and step up — never snapped a turn up.
+        var apron=SPIRAL_ENTRY_OFF+0.5;
+        if(rel<0.4 || rel>twoPi-apron){var d0=Math.abs(s.baseY-feetY); if(d0<bestStairDist){bestStairDist=d0;bestStairY=s.baseY;}}
+        // Top apron — from the last tread out to the exit gap; step off onto F2 / out the roof door.
+        var endRel=(s.totalAngle%twoPi+twoPi)%twoPi, dEnd=Math.abs(rel-endRel); dEnd=Math.min(dEnd,twoPi-dEnd);
+        if(dEnd<apron){var ty=s.baseY+s.riseTotal, dT=Math.abs(ty-feetY); if(dT<bestStairDist){bestStairDist=dT;bestStairY=ty;}}
+      }
+      continue;
+    }
     var rx=x-s.cx, rz=z-s.cz;
     var along=rx*s.dirX+rz*s.dirZ;
     var across=Math.abs(rx*(-s.dirZ)+rz*s.dirX);
