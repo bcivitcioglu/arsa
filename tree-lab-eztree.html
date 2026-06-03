@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tree Lab — EZ-Tree (library)</title>
+<style>
+  html,body{margin:0;height:100%;background:#9ec5e8;font-family:system-ui,sans-serif;overflow:hidden}
+  #c{display:block;width:100vw;height:100vh}
+  #hud{position:fixed;top:10px;left:10px;background:rgba(255,255,255,.93);border:1px solid #ccd;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.6;box-shadow:0 2px 12px rgba(0,0,0,.12);max-width:280px}
+  #hud b{color:#2D6A4F}
+  #hud .row{margin-top:8px}
+  #hud button{font:inherit;padding:5px 10px;margin:3px 3px 0 0;border:1px solid #ccd;border-radius:7px;background:#fff;cursor:pointer}
+  #hud button.on{background:#2D6A4F;color:#fff;border-color:#2D6A4F}
+  #hud select{font:inherit;padding:3px 6px;border-radius:6px;border:1px solid #ccd}
+  #hud .hint{color:#888;font-size:11px}
+  #loading{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font:14px system-ui;color:#2D6A4F;background:rgba(255,255,255,.9);padding:10px 16px;border-radius:8px}
+  .lbl{position:fixed;transform:translate(-50%,-50%);font-weight:700;font-size:12px;color:#234;pointer-events:none;text-shadow:0 1px 3px #fff,0 0 4px #fff;white-space:nowrap}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="loading">Loading EZ-Tree library…</div>
+<div id="err" style="display:none;position:fixed;left:10px;bottom:10px;max-width:70vw;background:#2b0000;color:#ffb4b4;font:12px/1.5 monospace;padding:10px 12px;border:1px solid #803030;border-radius:8px;white-space:pre-wrap;z-index:99"></div>
+<div id="hud" style="display:none">
+  <div><b>🌳 Tree Lab — EZ-Tree</b></div>
+  <div class="hint">Real procedural-tree library (dgreenheck/ez-tree)</div>
+  <div class="row">Add preset:
+    <select id="preset"></select>
+    <button id="bAdd">＋</button>
+  </div>
+  <div class="row">
+    <button id="bRegen">↻ New seeds</button>
+    <button id="bClear">Clear</button>
+  </div>
+  <div class="row">
+    <button id="bWind" class="on">Wind</button>
+    <button id="bShadow" class="on">Shadows</button>
+  </div>
+  <div class="row hint">Drag: orbit · Wheel: zoom · Right-drag: pan</div>
+</div>
+
+<script>
+function showErr(msg){var e=document.getElementById('err');e.style.display='block';e.textContent+=msg+'\n';var l=document.getElementById('loading');if(l)l.style.display='none';}
+window.addEventListener('error',ev=>showErr('JS error: '+ev.message+(ev.filename?(' @ '+ev.filename.split('/').pop()+':'+ev.lineno):'')));
+window.addEventListener('unhandledrejection',ev=>showErr('Promise rejected: '+(ev.reason&&ev.reason.message||ev.reason)));
+</script>
+
+<!-- Pin three.js (EZ-Tree needs >=0.167) and dedupe it for the library via ?external=three -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://esm.sh/three@0.169.0",
+    "three/addons/": "https://esm.sh/three@0.169.0/examples/jsm/",
+    "@dgreenheck/ez-tree": "https://esm.sh/@dgreenheck/ez-tree?external=three"
+  }
+}
+</script>
+
+<script type="module">
+let THREE, OrbitControls, ezTree, Tree, TreePreset;
+try {
+  THREE = await import('three');
+  ({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
+  ezTree = await import('@dgreenheck/ez-tree');
+  Tree = ezTree.Tree; TreePreset = ezTree.TreePreset;
+  if (!Tree) throw new Error('EZ-Tree loaded but no `Tree` export found (got: ' + Object.keys(ezTree).join(', ') + ')');
+  start();
+} catch (e) {
+  showErr('Module load failed: ' + (e && e.message || e));
+}
+
+function start(){
+  const $ = id => document.getElementById(id);
+  $('loading').style.display = 'none';
+  $('hud').style.display = 'block';
+
+  const canvas = $('c');
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x9ec5e8);
+  scene.fog = new THREE.Fog(0x9ec5e8, 40, 110);
+
+  const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 500);
+  camera.position.set(0, 8, 24);
+
+  const controls = new OrbitControls(camera, canvas);
+  controls.target.set(0, 4, 0);
+  controls.enableDamping = true; controls.dampingFactor = 0.08;
+  controls.maxPolarAngle = Math.PI/2 - 0.02;
+  controls.maxDistance = 120;
+
+  scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x4a6b32, 0.8));
+  const sun = new THREE.DirectionalLight(0xfff3da, 1.25);
+  sun.position.set(20, 30, 16); sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  const sc = sun.shadow.camera; sc.left=-40; sc.right=40; sc.top=40; sc.bottom=-40; sc.near=1; sc.far=120;
+  sun.shadow.bias = -0.0006;
+  scene.add(sun);
+
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(300,300),
+    new THREE.MeshStandardMaterial({color:0x5d8a3a, roughness:1}));
+  ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+
+  // Populate the preset dropdown from the library
+  const presetNames = TreePreset ? Object.keys(TreePreset) : [];
+  if (presetNames.length === 0) showErr('No TreePreset names found — exports: ' + Object.keys(ezTree).join(', '));
+  const sel = $('preset');
+  presetNames.forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
+  ['Oak Medium','Pine Medium','Aspen Medium'].forEach(p => { if (presetNames.includes(p)) sel.value = p; });
+
+  // Trees we manage (for wind update + labels)
+  const trees = [];   // {tree, label, anchor}
+  let seedCounter = 1;
+
+  function makeTree(presetName, x){
+    const tree = new Tree();
+    try { if (presetName && TreePreset[presetName]) tree.loadPreset(presetName); } catch(e){ showErr('loadPreset("'+presetName+'") failed: '+e.message); }
+    try { tree.options.seed = (seedCounter++ * 1337) % 100000; } catch(e){}
+    tree.generate();
+    tree.position.set(x, 0, 0);
+    tree.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+    scene.add(tree);
+    // screen label
+    const box = new THREE.Box3().setFromObject(tree);
+    const top = box.max.y || 6;
+    const el = document.createElement('div'); el.className = 'lbl'; el.textContent = presetName || 'Tree';
+    document.body.appendChild(el);
+    trees.push({ tree, label: el, anchor: new THREE.Vector3(x, top + 0.6, 0) });
+  }
+
+  function layout(){
+    // spread existing trees evenly along X
+    const n = trees.length; if (!n) return;
+    const span = Math.max(10, n * 9);
+    trees.forEach((t, i) => {
+      const x = -span/2 + (i + 0.5) * (span/n);
+      t.tree.position.x = x; t.anchor.x = x;
+    });
+  }
+
+  function clearAll(){
+    trees.forEach(t => { scene.remove(t.tree); t.label.remove(); });
+    trees.length = 0;
+  }
+
+  // initial scene: three contrasting presets
+  ['Oak Medium','Pine Medium','Aspen Large','Bush 1'].forEach((p, i) => { if (presetNames.includes(p)) makeTree(p, 0); });
+  if (trees.length === 0 && presetNames.length) makeTree(presetNames[0], 0);
+  layout();
+
+  // ── HUD ──
+  let windOn = true;
+  $('bAdd').onclick = () => { makeTree(sel.value, 0); layout(); };
+  $('bRegen').onclick = () => { const names = trees.map(t => t.label.textContent); clearAll(); names.forEach(n => makeTree(n, 0)); layout(); };
+  $('bClear').onclick = () => clearAll();
+  $('bWind').onclick = function(){ windOn = !windOn; this.classList.toggle('on', windOn); };
+  $('bShadow').onclick = function(){ renderer.shadowMap.enabled = !renderer.shadowMap.enabled; scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); this.classList.toggle('on', renderer.shadowMap.enabled); };
+
+  // ── Render loop ──
+  const clock = new THREE.Clock();
+  const proj = new THREE.Vector3();
+  let windWorks = true;
+  function animate(){
+    requestAnimationFrame(animate);
+    const t = clock.getElapsedTime();
+    if (windOn && windWorks){
+      for (const o of trees){
+        try { o.tree.update(t); } catch(e){ windWorks = false; showErr('tree.update() unsupported: '+e.message+' (wind disabled)'); break; }
+      }
+    }
+    controls.update();
+    renderer.render(scene, camera);
+    for (const o of trees){
+      proj.copy(o.anchor).project(camera);
+      const vis = proj.z < 1;
+      o.label.style.display = vis ? 'block' : 'none';
+      if (vis){ o.label.style.left = ((proj.x*0.5+0.5)*innerWidth)+'px'; o.label.style.top = ((-proj.y*0.5+0.5)*innerHeight)+'px'; }
+    }
+  }
+  animate();
+
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+}
+</script>
+</body>
+</html>

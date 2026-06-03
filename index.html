@@ -7,6 +7,49 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<!-- EZ-Tree (realistic procedural trees) needs modern three.js as ES modules. It runs ISOLATED
+     from the app's global r128: this module generates a tree and exports it to GLB in memory;
+     the app then parses that GLB with its own r128 GLTFLoader. The two three.js never share objects. -->
+<script type="module">
+// Full-URL imports (no import map / no bare specifiers). ?deps=three@0.169.0 makes
+// ez-tree and GLTFExporter resolve to the SAME /three@0.169.0 module → one instance.
+(async () => {
+  let step = 'init';
+  try {
+    step = 'ez-tree';
+    const ez = await import('https://esm.sh/@dgreenheck/ez-tree@1.1.0?deps=three@0.169.0');
+    step = 'GLTFExporter';
+    const { GLTFExporter } = await import('https://esm.sh/three@0.169.0/examples/jsm/exporters/GLTFExporter.js');
+    if (!ez.Tree) throw new Error('ez-tree loaded but no Tree export (' + Object.keys(ez).join(',') + ')');
+    const exporter = new GLTFExporter();
+    window.EZTREE = {
+      ready: true,
+      presets: ez.TreePreset ? Object.keys(ez.TreePreset) : [],
+      // Generate a tree from a preset and return a GLB ArrayBuffer.
+      async generateGLB(preset, seed) {
+        const tree = new ez.Tree();
+        if (preset && ez.TreePreset && ez.TreePreset[preset]) tree.loadPreset(preset);
+        if (seed != null) { try { tree.options.seed = seed; } catch (e) {} }
+        tree.generate();
+        // Wait for bark/leaf textures to finish loading so they embed into the GLB.
+        const imgs = [];
+        tree.traverse(o => {
+          const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+          mats.forEach(m => ['map','normalMap','roughnessMap','metalnessMap','alphaMap','aoMap','emissiveMap']
+            .forEach(k => { const t = m && m[k]; if (t && t.image) imgs.push(t.image); }));
+        });
+        await Promise.all(imgs.map(im => (im && im.complete === false)
+          ? new Promise(r => { im.onload = r; im.onerror = r; }) : Promise.resolve()));
+        return await exporter.parseAsync(tree, { binary: true, onlyVisible: true });
+      }
+    };
+    window.dispatchEvent(new Event('eztree-ready'));
+  } catch (e) {
+    window.EZTREE_ERROR = '[' + step + '] ' + String(e && e.message || e);
+    console.error('EZ-Tree module init failed at step:', step, e);
+  }
+})();
+</script>
 <script>
 THREE.OrbitControls=function(cam,el){
   var self=this;self.enabled=true;
@@ -583,8 +626,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         <span class="panel-arrow">▾</span>
       </div>
       <div class="panel-body palette-grid">
-        <button class="palette-item" data-obj="cypress" title="Selvi">&#127794;</button>
-        <button class="palette-item" data-obj="deciduous" title="Agac">&#127795;</button>
+        <button class="palette-item" data-obj="tree-menu" title="Agac / Bitki">&#127795;</button>
         <button class="palette-item" data-obj="pool" title="Havuz">&#127946;</button>
         <button class="palette-item" data-obj="fence" title="Cit">&#9475;</button>
         <button class="palette-item" data-obj="human" title="Insan">&#128694;</button>
@@ -1383,8 +1425,9 @@ function roomVilla(){var vs=getEditableVillas();return vs.find(function(v){retur
 function roomFloorPoly(){var v=roomVilla();if(!v)return null;
   if(STATE.roomEdit.floor==='f3'&&STATE.f3MatchF1)return v.poly;   // F3 set back → F1 footprint
   if((STATE.roomEdit.floor==='f2'||STATE.roomEdit.floor==='f3')&&villaF2Poly[v.key]&&villaF2Poly[v.key].length>=3)return villaF2Poly[v.key];
-  // Plan E: F1 includes the connecting wing — edit it as one extended room (walls stored in the core OBB frame).
-  if(STATE.roomEdit.floor==='f1'&&STATE.planE&&STATE.pE&&STATE.pE.unions&&STATE.pE.unions[v.key]&&STATE.pE.unions[v.key].length>=3)return STATE.pE.unions[v.key];
+  // Plan E (room connection): joined villas are SEPARATE houses sharing a solid party wall. The ODA editor
+  // edits the CORE villa footprint — the same edge frame the 3D builder uses for exterior windows/doors —
+  // so anything placed here lands on the correct wall. (The connecting wing is a fixed structure, not edited here.)
   return v.poly}
 function roomFrame(){var v=roomVilla();return v?villaOBB(v.poly):null}
 
@@ -1414,7 +1457,7 @@ function roomWindows(){
 function roomEnsureExwin(){
   var d=roomData();
   if(!d.exwin){var k=STATE.roomEdit.key,fl=STATE.roomEdit.floor,auto=(villaAutoWin[k]&&villaAutoWin[k][fl])||[];
-    d.exwin=auto.map(function(w){return {edge:w.edge,t:w.t,width:w.width,sillY:w.sillY,height:w.height};});}
+    d.exwin=auto.map(function(w){return {edge:w.edge,t:w.t,width:w.width,sillY:w.sillY,height:w.height,type:w.type};});}
   return d.exwin;
 }
 function roomWindowCommit(){saveInteriors();renderFull();roomScheduleRebuild();}
@@ -2197,6 +2240,15 @@ function grassBladeGeometry(segments){
   g.setAttribute('aHeight',new THREE.Float32BufferAttribute(heightAttr,1));
   g.setIndex(indices);return g;
 }
+// Shared grass shader material — used by the land-wide grass AND the placeable 1×1 tiles,
+// so a single uTime update (in animateThree) animates the wind everywhere.
+function ensureGrassMaterial(){
+  if(!grassMaterial){
+    grassMaterial=new THREE.ShaderMaterial({vertexShader:grassVertexShader,fragmentShader:grassFragmentShader,
+      uniforms:{uTime:{value:0},uWind:{value:GRASS_WIND},uHeight:{value:GRASS_HEIGHT}},side:THREE.DoubleSide});
+  }
+  return grassMaterial;
+}
 function buildLandGrass(){
   if(grassMesh){threeScene.remove(grassMesh);grassMesh.geometry.dispose();}
   // Parcel polygon bbox for rejection sampling
@@ -2227,13 +2279,55 @@ function buildLandGrass(){
   geo.setAttribute('iTint',new THREE.InstancedBufferAttribute(tint,1));
   geo.setAttribute('iPhase',new THREE.InstancedBufferAttribute(phase,1));
   geo.instanceCount=count;
-  if(!grassMaterial){
-    grassMaterial=new THREE.ShaderMaterial({vertexShader:grassVertexShader,fragmentShader:grassFragmentShader,
-      uniforms:{uTime:{value:0},uWind:{value:GRASS_WIND},uHeight:{value:GRASS_HEIGHT}},side:THREE.DoubleSide});
-  }
+  ensureGrassMaterial();
   grassMesh=new THREE.Mesh(geo,grassMaterial);
   grassMesh.frustumCulled=false;
   threeScene.add(grassMesh);
+}
+// Carpet a flat roof polygon with the SAME realistic blade grass as the land — a green-roof,
+// so the bare gray slabs of garages / connector wings don't look dry. poly2D is in the same
+// 2D space as the slabs (parcel/world-2D [x,y], world Z = −y); roofTopY is the slab's world
+// top height; group is the (untransformed) builder group the slab was added to. Mirrors
+// buildLandGrass(): a green soil layer beneath, then instanced blades scattered over the area.
+function scatterRoofGrass(poly2D, roofTopY, group){
+  if(!poly2D || poly2D.length<3) return;
+  ensureGrassMaterial();
+  // Green soil layer just above the slab top (the slab itself is bare concrete).
+  var sh=new THREE.Shape(); sh.moveTo(poly2D[0][0],poly2D[0][1]);
+  for(var s=1;s<poly2D.length;s++) sh.lineTo(poly2D[s][0],poly2D[s][1]); sh.closePath();
+  var soil=new THREE.Mesh(new THREE.ShapeGeometry(sh),new THREE.MeshStandardMaterial({color:0x4f7a34,roughness:1,side:THREE.DoubleSide}));
+  soil.rotation.x=-Math.PI/2; soil.position.y=roofTopY+0.006; soil.receiveShadow=true; group.add(soil);
+  // Polygon bbox + area (shoelace) for rejection sampling + blade count.
+  var minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity,area=0,N=poly2D.length;
+  for(var i=0;i<N;i++){var p=poly2D[i],q=poly2D[(i+1)%N];
+    minX=Math.min(minX,p[0]);maxX=Math.max(maxX,p[0]);minY=Math.min(minY,p[1]);maxY=Math.max(maxY,p[1]);
+    area+=p[0]*q[1]-q[0]*p[1];}
+  area=Math.abs(area)/2;
+  var inPoly=function(x,y){var inside=false;for(var i=0,j=N-1;i<N;j=i++){
+    var xi=poly2D[i][0],yi=poly2D[i][1],xj=poly2D[j][0],yj=poly2D[j][1];
+    if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))inside=!inside;}return inside;};
+  var count=Math.min(40000,Math.max(400,Math.round(area*700))), gy=roofTopY+0.02;
+  var offset=new Float32Array(count*3),orient=new Float32Array(count),scale=new Float32Array(count*2),
+      bend=new Float32Array(count),tint=new Float32Array(count),phase=new Float32Array(count);
+  for(var i=0;i<count;i++){
+    var px,py,tries=0,ok=false;
+    do{px=minX+Math.random()*(maxX-minX);py=minY+Math.random()*(maxY-minY);tries++;ok=inPoly(px,py);}while(!ok&&tries<40);
+    offset[i*3]=px;offset[i*3+1]=gy;offset[i*3+2]=-py;
+    orient[i]=Math.random()*Math.PI*2;
+    var sy=0.55+Math.random()*0.9;
+    scale[i*2]=0.05+Math.random()*0.04;scale[i*2+1]=ok?sy:0.0; // collapse a stray blade that missed the polygon
+    bend[i]=Math.random()*0.5+0.15;tint[i]=Math.random();phase[i]=Math.random()*Math.PI*2;
+  }
+  var geo=grassBladeGeometry(4);
+  geo.setAttribute('iOffset',new THREE.InstancedBufferAttribute(offset,3));
+  geo.setAttribute('iOrient',new THREE.InstancedBufferAttribute(orient,1));
+  geo.setAttribute('iScale',new THREE.InstancedBufferAttribute(scale,2));
+  geo.setAttribute('iBend',new THREE.InstancedBufferAttribute(bend,1));
+  geo.setAttribute('iTint',new THREE.InstancedBufferAttribute(tint,1));
+  geo.setAttribute('iPhase',new THREE.InstancedBufferAttribute(phase,1));
+  geo.instanceCount=count;
+  var mesh=new THREE.Mesh(geo,grassMaterial);
+  mesh.frustumCulled=false; group.add(mesh);
 }
 function resizeThreeRenderer(){if(!threeRenderer)return;const vp=document.getElementById('viewport');const w=vp.clientWidth,h=vp.clientHeight;threeRenderer.setSize(w,h);if(threeCamera){threeCamera.aspect=w/h;threeCamera.updateProjectionMatrix()}}
 window.addEventListener('resize',()=>{if(threeInited&&STATE.view==='3d')resizeThreeRenderer()});
@@ -2859,6 +2953,7 @@ function buildGarage(poly2D, group, openEdgeIdx, wallMat, roadEdgeIdx){
   }
   buildWallPanels(poly2D, edges, SUB_H, gH, ops, matWall, grp, 0.18, 0, 'garage');
   slab(SUB_H+gH,SLAB,matSlab);  // flat roof
+  scatterRoofGrass(poly2D, SUB_H+gH+SLAB, grp);  // green-roof so the garage top isn't a bare dry slab
   // Road-facing roll-up garage door: a sliding panel that retracts upward when the character approaches.
   if(roadEdgeIdx!=null && rdw>0.5){
     var rE=edges[roadEdgeIdx], rcx=rE.ax+0.5*rE.dx, rcy=rE.ay+0.5*rE.dy, headerY=SUB_H+rdh;
@@ -2906,6 +3001,7 @@ function buildExtension(ext, group, F1, wallMat){
   if(!ext.divider) ops[2]=[{t:0.5,width:edges[2].len,height:F1,sillY:0,type:'door'}];
   buildWallPanels(quad, edges, SUB_H, F1, ops, matW, grp, 0.18, 0, 'planEext');
   slab(SUB_H+F1,ROOF,matSlab);    // flat roof at the F1 ceiling height (single storey — F2 does not cover it)
+  scatterRoofGrass(quad, SUB_H+F1+ROOF, grp);  // green-roof the connector wing so its top isn't a bare dry slab
   group.add(grp);
   // Register as walkable F1 floor so the character walks in seamlessly at the villa interior level.
   var wp=[]; for(var gi=0;gi<n;gi++) wp.push([quad[gi][0], -quad[gi][1]]);
@@ -2950,7 +3046,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   var matRailing=new THREE.MeshStandardMaterial({color:vs.railing,roughness:0.25,metalness:0.85});
   var matFrame=new THREE.MeshStandardMaterial({color:vs.frame,roughness:0.3,metalness:0.75});
   var matDoor=new THREE.MeshStandardMaterial({color:vs.door,roughness:0.55});
-  // OBB for pergola orientation
+  // OBB for villa orientation (dir/perp axes used by roof elements, baca placement, etc.)
   var longestLen2=0,longestIdx2=0;
   for(var i=0;i<n;i++){var a=poly2D[i],b=poly2D[(i+1)%n];var l=Math.hypot(b[0]-a[0],b[1]-a[1]);if(l>longestLen2){longestLen2=l;longestIdx2=i}}
   var eA=poly2D[longestIdx2],eB=poly2D[(longestIdx2+1)%n];
@@ -3247,7 +3343,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       // Wall opened to a Plan E wing — no auto window/door here (the opening is added below).
     }else if(foi===longIdx){
       autoWin1.push({edge:foi, t:bigT, width:fe.len*0.5, height:g1H2, sillY:g1SillY});
-      openingsF1[foi].push({t:doorT, width:1.4, height:doorH3, sillY:0, type:'door'});
+      autoWin1.push({edge:foi, t:doorT, width:1.4, type:'door'});
       autoWin1.push({edge:foi, t:smallT, width:fe.len*0.2, height:g1H2, sillY:g1SillY});
     }else{
       autoWin1.push({edge:foi, t:0.5, width:fe.len*0.55, height:g1H2, sillY:g1SillY});
@@ -3742,7 +3838,10 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
         var hw=new THREE.Mesh(new THREE.BoxGeometry(len,h1,swThick),matConcrete);
         hw.position.set(midX,h1/2,-midY); hw.rotation.y=Math.atan2(ey2-ey1,ex2-ex1);
         hw.castShadow=true; hw.receiveShadow=true; g.add(hw);
-        wallColliders.push({ax:ex1,az:-ey1,bx:ex2,bz:-ey2,active:true,floor:'stairF1half',yLow:SUB_H,yHigh:SUB_H+h1});
+        // Collider stops ~0.4m below the F2 floor: this wall sits directly UNDER the upper (arrival) flight,
+        // so a full-height collider clips your feet as you crest the stairs onto F2 ("partially blocked").
+        // The removed top sliver is above head height on F1, so F1 blocking is unaffected. Mesh stays full.
+        wallColliders.push({ax:ex1,az:-ey1,bx:ex2,bz:-ey2,active:true,floor:'stairF1half',yLow:SUB_H,yHigh:SUB_H+Math.max(0.1,h1-0.4)});
       })();
 
       // === Rooftop stair tower (merdiven evi): FULLY enclose the roof exit — 4 walls + a roof cap. ===
@@ -3844,118 +3943,14 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     wallColliders.push(col); piv.userData.collider=col;
   }
 
-  // Floor 1 facade: glass, mullions, front door (uses poly2D edges)
-  for(ei=0;ei<n;ei++){var e=edges[ei];if(e.len<2)continue;var faceAngle=Math.atan2(e.nx,-e.ny);var isFront=(ei===longIdx);
-    var gMat=isFront?matGlassLit:matGlass,gOff=0.06;
+  // Floor 1 facade — every opening (windows + doors) comes from win1: the ODA-plan list when the user
+  // has edited this floor, otherwise the auto list (the sensible defaults). No hardcoded facade meshes:
+  // the wall holes (openingsF1) and these meshes are driven by the SAME list, so they always agree.
+  win1.forEach(function(w){ var e=edges[w.edge]; if(!e||e.len<0.5)return; if(w.type==='door') buildEdDoor(e, w.t, w.width, 0, doorH3, 'F1'); else buildEdWindow(e, w.t, w.width, (w.sillY!=null?w.sillY:g1SillY), (w.height||g1H2), 0, 'F1', (w.edge===longIdx)); });
 
-    if(edited1){ if(isFront){ /* door only — windows come from the edited list below */ } else { continue; } }
-    if(isFront){
-      // === FRONT EDGE: bigger window + door (shifted toward garden) + smaller window ===
-      if(!edited1){
-      // Bigger window (existing look)
-      var bigW=e.len*0.5;
-      var bgx=e.ax+bigT*e.dx+e.nx*gOff, bgz=e.ay+bigT*e.dy+e.ny*gOff;
-      var bigGlass=new THREE.Mesh(new THREE.PlaneGeometry(bigW,g1H2),gMat);
-      bigGlass.position.set(bgx,g1Center,-bgz);bigGlass.rotation.y=faceAngle;g.add(bigGlass);
-      registerWindowPane(bigGlass,e,bigT,bigW,g1Center,g1H2,faceAngle,gOff,SUB_H,'F1');
-      // Bigger window vertical mullions
-      var bigMC=Math.max(2,Math.round(bigW/2));
-      for(var bmi=0;bmi<bigMC;bmi++){
-        var bmt=(bmi+1)/(bigMC+1);
-        var bmtx=bigT-bigW/e.len*0.5+bmt*bigW/e.len;
-        var bmmx=e.ax+bmtx*e.dx+e.nx*(gOff+0.01);
-        var bmmz=e.ay+bmtx*e.dy+e.ny*(gOff+0.01);
-        var bmv=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);
-        bmv.position.set(bmmx,g1Center,-bmmz);bmv.rotation.y=faceAngle;g.add(bmv);
-      }
-      // Bigger window horizontal mullion
-      var bhx=e.ax+bigT*e.dx+e.nx*(gOff+0.01), bhz=e.ay+bigT*e.dy+e.ny*(gOff+0.01);
-      var bhm=new THREE.Mesh(new THREE.PlaneGeometry(bigW,0.05),matFrame);
-      bhm.position.set(bhx,g1Center+g1H2*0.15,-bhz);bhm.rotation.y=faceAngle;g.add(bhm);
-
-      // NEW smaller window on the other side of the door (toward garden)
-      var smallW=e.len*0.2;
-      var sgx=e.ax+smallT*e.dx+e.nx*gOff, sgz=e.ay+smallT*e.dy+e.ny*gOff;
-      var smallGlass=new THREE.Mesh(new THREE.PlaneGeometry(smallW,g1H2),gMat);
-      smallGlass.position.set(sgx,g1Center,-sgz);smallGlass.rotation.y=faceAngle;g.add(smallGlass);
-      registerWindowPane(smallGlass,e,smallT,smallW,g1Center,g1H2,faceAngle,gOff,SUB_H,'F1');
-      // Smaller window vertical mullion (1)
-      var smv=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);
-      var smvX=e.ax+smallT*e.dx+e.nx*(gOff+0.01), smvZ=e.ay+smallT*e.dy+e.ny*(gOff+0.01);
-      smv.position.set(smvX,g1Center,-smvZ);smv.rotation.y=faceAngle;g.add(smv);
-      // Smaller window horizontal mullion
-      var shm=new THREE.Mesh(new THREE.PlaneGeometry(smallW,0.05),matFrame);
-      shm.position.set(smvX,g1Center+g1H2*0.15,-smvZ);shm.rotation.y=faceAngle;g.add(shm);
-      } // /!edited1
-
-      // Front door — hinged pivot for opening/closing in FP mode
-      var doorWide=1.2;
-      // Hinge at the t-direction-start side of the door so it swings inward along edge tangent
-      var hingeT=doorT-(doorWide*0.5)/e.len;
-      var doorHX=e.ax+hingeT*e.dx;
-      var doorHY=e.ay+hingeT*e.dy;
-      // baseRot makes the pivot's local +X align with the edge tangent in world (door sits flat in wall).
-      // Pivot rotation.y = θ rotates local +X to world (cos θ, 0, -sin θ).
-      // World edge tangent = (e.ux, 0, -e.uy). So cos θ = e.ux, sin θ = e.uy → θ = atan2(e.uy, e.ux) = e.angle.
-      var baseRot=Math.atan2(e.uy,e.ux);
-      // Door opens by ±90°. After +π/2 from baseRot, free-end direction in 2D = (-e.uy, e.ux).
-      // For inward swing, dot with inward normal (-e.nx, -e.ny) > 0.
-      var swingSign=1;
-      if(((-e.uy)*(-e.nx)+(e.ux)*(-e.ny))<0) swingSign=-1;
-      var doorPiv=buildHingedDoor(doorHX, doorH3/2, -doorHY, doorWide, doorH3, baseRot, swingSign, matDoor, g);
-      // Door collider: spans the door opening (deactivated when door opens, allowing passage)
-      var doorEndX2D=e.ax+(hingeT+doorWide/e.len)*e.dx;
-      var doorEndY2D=e.ay+(hingeT+doorWide/e.len)*e.dy;
-      var doorCol={ax:doorHX,az:-doorHY,bx:doorEndX2D,bz:-doorEndY2D,active:true,floor:'F1',yLow:SUB_H,yHigh:SUB_H+doorH3,isDoor:true};
-      wallColliders.push(doorCol);
-      doorPiv.userData.collider=doorCol;
-      // Door frame header (above door)
-      var dfx=e.ax+doorT*e.dx+e.nx*0.0, dfz=e.ay+doorT*e.dy+e.ny*0.0;
-      var df1=new THREE.Mesh(new THREE.PlaneGeometry(1.45,0.08),matFrame);
-      df1.position.set(dfx,doorH3+0.04,-dfz);df1.rotation.y=faceAngle;g.add(df1);
-    }else{
-      // === NON-FRONT EDGES: single centered window (existing behavior) ===
-      var glassW=e.len*0.55;
-      var gcx=e.ax+0.5*e.dx+e.nx*gOff,gcz=e.ay+0.5*e.dy+e.ny*gOff;
-      var gm1=new THREE.Mesh(new THREE.PlaneGeometry(glassW,g1H2),gMat);
-      gm1.position.set(gcx,g1Center,-gcz);gm1.rotation.y=faceAngle;g.add(gm1);
-      registerWindowPane(gm1,e,0.5,glassW,g1Center,g1H2,faceAngle,gOff,SUB_H,'F1');
-      var mullionCount=Math.max(2,Math.round(glassW/2));
-      for(var mi2=0;mi2<mullionCount;mi2++){
-        var mt=(mi2+1)/(mullionCount+1);
-        var mmx=e.ax+(0.5-glassW/e.len*0.5+mt*glassW/e.len)*e.dx+e.nx*(gOff+0.01);
-        var mmz=e.ay+(0.5-glassW/e.len*0.5+mt*glassW/e.len)*e.dy+e.ny*(gOff+0.01);
-        var mv1=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g1H2),matFrame);
-        mv1.position.set(mmx,g1Center,-mmz);mv1.rotation.y=faceAngle;g.add(mv1);
-      }
-      var hmx=e.ax+0.5*e.dx+e.nx*(gOff+0.01),hmz=e.ay+0.5*e.dy+e.ny*(gOff+0.01);
-      var hm1=new THREE.Mesh(new THREE.PlaneGeometry(glassW,0.05),matFrame);
-      hm1.position.set(hmx,g1Center+g1H2*0.15,-hmz);hm1.rotation.y=faceAngle;g.add(hm1);
-    }
-  }
-  // Edited F1 windows (user-placed) — generic builder, glass + mullions + panjur.
-  if(edited1){ win1.forEach(function(w){ var e=edges[w.edge]; if(!e||e.len<0.5)return; if(w.type==='door') buildEdDoor(e, w.t, w.width, 0, doorH3, 'F1'); else buildEdWindow(e, w.t, w.width, (w.sillY!=null?w.sillY:g1SillY), (w.height||g1H2), 0, 'F1', (w.edge===longIdx)); }); }
-
-  // Floor 2 facade + balcony (uses f2edges — extended cantilever polygon for pentagon)
-  for(var f2ei=0;f2ei<f2n;f2ei++){var e=f2edges[f2ei];if(e.len<2)continue;var faceAngle=Math.atan2(e.nx,-e.ny);var isFront=(f2ei===f2longIdx);
-    var gMat=isFront?matGlassLit:matGlass,gOff=0.06;
-    if(edited2 && !isFront) continue;                 // edited floor: non-front auto windows replaced by the edited list
-    var f2WindowCenter=f2base+g2Center;
-    if(!edited2){
-    // Floor 2 glass — a plain centred window on every edge (the front balcony was removed)
-    var g2W=e.len*0.55;
-    var g2T=0.5;
-    var g2cx=e.ax+g2T*e.dx+e.nx*gOff, g2cz=e.ay+g2T*e.dy+e.ny*gOff;
-    var gm2=new THREE.Mesh(new THREE.PlaneGeometry(g2W,g2H2),gMat);gm2.position.set(g2cx,f2WindowCenter,-g2cz);gm2.rotation.y=faceAngle;g.add(gm2);
-    registerWindowPane(gm2,e,g2T,g2W,f2WindowCenter,g2H2,faceAngle,gOff,SUB_H,'F2');
-    // Floor 2 mullions
-    var mullionCountF2=Math.max(2,Math.round(g2W/2));
-    for(var mi3=0;mi3<mullionCountF2;mi3++){var mt2=(mi3+1)/(mullionCountF2+1);var m2x=e.ax+(g2T-g2W/e.len*0.5+mt2*g2W/e.len)*e.dx+e.nx*(gOff+0.01);var m2z=e.ay+(g2T-g2W/e.len*0.5+mt2*g2W/e.len)*e.dy+e.ny*(gOff+0.01);
-      var mv2=new THREE.Mesh(new THREE.PlaneGeometry(0.05,g2H2),matFrame);mv2.position.set(m2x,f2WindowCenter,-m2z);mv2.rotation.y=faceAngle;g.add(mv2)}
-    } // /!edited2
-  }
-  // Edited F2 windows (user-placed) — generic builder, glass + mullions + panjur.
-  if(edited2){ win2.forEach(function(w){ var e=f2edges[w.edge]; if(!e||e.len<0.5)return; if(w.type==='door') buildEdDoor(e, w.t, w.width, f2base, doorGlassH, 'F2'); else buildEdWindow(e, w.t, w.width, (w.sillY!=null?w.sillY:g2SillY), (w.height||g2H2), f2base, 'F2', (w.edge===f2longIdx)); }); }
+  // Floor 2 facade — all openings come from win2 (the ODA-plan list, or the auto defaults). Same
+  // single-source rule as F1/F3: the wall holes and these meshes are driven by one list. No hardcoded facade.
+  win2.forEach(function(w){ var e=f2edges[w.edge]; if(!e||e.len<0.5)return; if(w.type==='door') buildEdDoor(e, w.t, w.width, f2base, doorGlassH, 'F2'); else buildEdWindow(e, w.t, w.width, (w.sillY!=null?w.sillY:g2SillY), (w.height||g2H2), f2base, 'F2', (w.edge===f2longIdx)); });
   // Rooftop railing colliders — prevent falling off the roof (follow the top storey's footprint)
   for(var rci=0;rci<roofN;rci++){
     var rce=roofEdges[rci];
@@ -3967,11 +3962,6 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     for(var pi=0;pi<=postCount;pi++){var pt=pi/postCount;var rpx=re.ax+pt*re.dx,rpz=re.ay+pt*re.dy;var rpost=new THREE.Mesh(new THREE.BoxGeometry(railTh,railH,railTh),matRailing);rpost.position.set(rpx,roofYv+railH/2,-rpz);g.add(rpost)}
     var rmx=(re.ax+re.bx)/2,rmy=(re.ay+re.by)/2;var tR=new THREE.Mesh(new THREE.BoxGeometry(re.len,railTh,railTh),matRailing);tR.position.set(rmx,roofYv+railH,-rmy);tR.rotation.y=re.angle;g.add(tR);
     var mR=new THREE.Mesh(new THREE.BoxGeometry(re.len,railTh,railTh),matRailing);mR.position.set(rmx,roofYv+railH*0.5,-rmy);mR.rotation.y=re.angle;g.add(mR)}
-  // Pergola
-  var pergSz=Math.min(W,D)*0.35,pergH3=2.2;
-  [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(function(pr){var ppx=cent[0]+pr[0]*(pergSz/2-0.1)*dirX+pr[1]*(pergSz/2-0.1)*perpX;var ppz=cent[1]+pr[0]*(pergSz/2-0.1)*dirY+pr[1]*(pergSz/2-0.1)*perpY;var pm=new THREE.Mesh(new THREE.BoxGeometry(0.14,pergH3,0.14),matWoodDark);pm.position.set(ppx,roofYv+pergH3/2,-ppz);g.add(pm)});
-  for(var psi=0;psi<7;psi++){var pst=(psi/6-0.5)*pergSz;var psx=cent[0]+pst*perpX,psz=cent[1]+pst*perpY;var psm=new THREE.Mesh(new THREE.BoxGeometry(pergSz+0.1,0.08,0.06),matWoodDark);psm.position.set(psx,roofYv+pergH3,-psz);psm.rotation.y=Math.atan2(dirY,dirX);g.add(psm)}
-  for(var pbi=-1;pbi<=1;pbi+=2){var pbx=cent[0]+pbi*(pergSz*0.42)*dirX,pbz=cent[1]+pbi*(pergSz*0.42)*dirY;var pb=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.12,pergSz+0.1),matWoodDark);pb.position.set(pbx,roofYv+pergH3-0.06,-pbz);pb.rotation.y=Math.atan2(dirY,dirX);g.add(pb)}
   // === VENT BACA vertex selection ===
   // IMPORTANT: baca needs continuous vertical support to the ground, so it MUST sit above a
   // non-cantilever wall (not the cantilever overhang). For the pentagon, pick the non-cantilever
@@ -4102,35 +4092,40 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   // SUB_H is defined earlier (used by wall colliders too)
   // Subasman slab: extrude the same villa footprint, from local Y=-SUB_H to Y=0
   mvPolySlab(poly2D,-SUB_H,SUB_H,matRoofSlab);
-  // Entrance steps: 6 steps, ~16.7cm rise, 30cm tread, 2m wide, in front of the door (longIdx edge, t=0.1)
+  // Entrance steps — built automatically in front of EVERY ground-floor exterior door (from win1: the
+  // ODA-plan list or its auto defaults), so the steps FOLLOW the actual doors. If a door is moved or removed
+  // in the ODA editor its steps move/disappear with it; no orphaned steps at a former door's spot.
+  // Each flight drops the SUB_H plinth down to grade on the door's outward side.
   var STEPS_N=5, STEP_RISE=SUB_H/STEPS_N, STEP_TREAD=0.30, STAIR_W=2.0;
-  var stDoorEdge=edges[longIdx], stDoorT=doorT;
-  var stDoorCx=stDoorEdge.ax+stDoorT*stDoorEdge.dx;
-  var stDoorCy=stDoorEdge.ay+stDoorT*stDoorEdge.dy;
-  var stEdgeAngle=stDoorEdge.angle;
-  // Register entrance ramp for FP movement (player walks up to plinth)
-  var entRunLen=STEPS_N*STEP_TREAD;
-  var entStartX=stDoorCx+entRunLen*stDoorEdge.nx;
-  var entStartY=stDoorCy+entRunLen*stDoorEdge.ny;
-  stairZones.push({
-    cx:entStartX, cz:-entStartY,
-    dirX:-stDoorEdge.nx, dirZ:stDoorEdge.ny,
-    runLen:entRunLen, width:STAIR_W,
-    baseY:0, topY:SUB_H,
-    floor:'entrance'
-  });
-  for(var si2=0;si2<STEPS_N;si2++){
-    var stepH=(si2+1)*STEP_RISE;
-    var stepCY=-SUB_H+stepH/2; // local coords, centered vertically
-    var outDist=(STEPS_N-si2-0.5)*STEP_TREAD;
-    var stX=stDoorCx+outDist*stDoorEdge.nx;
-    var stY=stDoorCy+outDist*stDoorEdge.ny;
-    var stepMesh=new THREE.Mesh(new THREE.BoxGeometry(STAIR_W,stepH,STEP_TREAD),matRoofSlab);
-    stepMesh.position.set(stX,stepCY,-stY);
-    stepMesh.rotation.y=stEdgeAngle;
-    stepMesh.castShadow=true;stepMesh.receiveShadow=true;
-    g.add(stepMesh);
+  function buildEntranceSteps(stDoorEdge, stDoorT){
+    var stDoorCx=stDoorEdge.ax+stDoorT*stDoorEdge.dx;
+    var stDoorCy=stDoorEdge.ay+stDoorT*stDoorEdge.dy;
+    var stEdgeAngle=stDoorEdge.angle;
+    // Register entrance ramp for FP movement (player walks up to plinth)
+    var entRunLen=STEPS_N*STEP_TREAD;
+    var entStartX=stDoorCx+entRunLen*stDoorEdge.nx;
+    var entStartY=stDoorCy+entRunLen*stDoorEdge.ny;
+    stairZones.push({
+      cx:entStartX, cz:-entStartY,
+      dirX:-stDoorEdge.nx, dirZ:stDoorEdge.ny,
+      runLen:entRunLen, width:STAIR_W,
+      baseY:0, topY:SUB_H,
+      floor:'entrance'
+    });
+    for(var si2=0;si2<STEPS_N;si2++){
+      var stepH=(si2+1)*STEP_RISE;
+      var stepCY=-SUB_H+stepH/2; // local coords, centered vertically
+      var outDist=(STEPS_N-si2-0.5)*STEP_TREAD;
+      var stX=stDoorCx+outDist*stDoorEdge.nx;
+      var stY=stDoorCy+outDist*stDoorEdge.ny;
+      var stepMesh=new THREE.Mesh(new THREE.BoxGeometry(STAIR_W,stepH,STEP_TREAD),matRoofSlab);
+      stepMesh.position.set(stX,stepCY,-stY);
+      stepMesh.rotation.y=stEdgeAngle;
+      stepMesh.castShadow=true;stepMesh.receiveShadow=true;
+      g.add(stepMesh);
+    }
   }
+  win1.forEach(function(w){ if(w.type!=='door') return; var e=edges[w.edge]; if(!e||e.len<0.5) return; buildEntranceSteps(e, w.t); });
   // Lift the entire villa group up by SUBASMAN so it sits on the plinth
   g.position.y=SUB_H;
 
@@ -4383,7 +4378,7 @@ function wandererStep(obj){
   }
 }
 
-function createObj(type,x,z){let o;switch(type){case'cypress':o=createCypress();break;case'deciduous':o=createDeciduous();break;case'pool':o=createPool();break;case'fence':o=createFenceObj();break;case'pathway':o=createPathway();break;case'human':o=createHuman();break;case'dog':o=createDog();break;case'chicken':o=createChicken();break;default:o=createDeciduous()}o.position.set(x,0,z);return o}
+function createObj(type,x,z){if(type&&type.indexOf('eztree:')===0){const g=new THREE.Group();g.add(_m(new THREE.ConeGeometry(.7,2.4,8),new THREE.MeshBasicMaterial({color:0x2E7D32,transparent:true,opacity:.45}),0,1.2,0,0));g.position.set(x,0,z);return g}let o;switch(type){case'cypress':o=createCypress();break;case'deciduous':o=createDeciduous();break;case'pool':o=createPool();break;case'fence':o=createFenceObj();break;case'pathway':o=createPathway();break;case'human':o=createHuman();break;case'dog':o=createDog();break;case'chicken':o=createChicken();break;default:o=createDeciduous()}o.position.set(x,0,z);return o}
 function createFenceObj(){const g=new THREE.Group();const mat=new THREE.MeshPhongMaterial({color:0x8B6914});for(let i=0;i<4;i++)g.add(_m(new THREE.BoxGeometry(.1,1.2,.1),mat,i*1.2,.6,0,1));g.add(_m(new THREE.BoxGeometry(3.6,.06,.05),mat,1.8,.9,0,1));g.add(_m(new THREE.BoxGeometry(3.6,.06,.05),mat,1.8,.4,0,1));return g}
 
 // Fence wall style definitions — matches the wall style picker in the UI
@@ -4515,7 +4510,91 @@ const raycaster=new THREE.Raycaster(),mouse2=new THREE.Vector2(),groundPlane=new
 const threeCanvas=document.getElementById('threeCanvas');
 function updateMouse3D(e){const r=threeCanvas.getBoundingClientRect();mouse2.x=((e.clientX-r.left)/r.width)*2-1;mouse2.y=-((e.clientY-r.top)/r.height)*2+1}
 
+
 // Palette click
+// ═══════════════════════════════════════════════════════════════
+// EZ-TREE PLACEMENT — realistic procedural trees/plants.
+// The <head> module generates a tree and exports it to GLB; here we
+// parse it with the app's r128 GLTFLoader and cache one normalized
+// template per type (subsequent placements clone it — instant).
+// ═══════════════════════════════════════════════════════════════
+const TREE_OPTIONS=[
+  {tr:'Meşe Ağacı',  preset:'Oak Medium',   h:8,   emoji:'🌳'},
+  {tr:'Büyük Meşe',  preset:'Oak Large',    h:11,  emoji:'🌳'},
+  {tr:'Çam Ağacı',   preset:'Pine Medium',  h:9,   emoji:'🌲'},
+  {tr:'Büyük Çam',   preset:'Pine Large',   h:13,  emoji:'🌲'},
+  {tr:'Titrek Kavak',preset:'Aspen Medium', h:9,   emoji:'🌳'},
+  {tr:'Dişbudak',    preset:'Ash Large',    h:11,  emoji:'🌳'},
+  {tr:'Çalı',        preset:'Bush 1',       h:1.4, emoji:'🌿'},
+  {tr:'Çalılık',     preset:'Bush 2',       h:1.6, emoji:'🌿'},
+];
+var ezTemplateCache={}, ezPlacement=null, treeMenuEl=null;
+function getEzTemplate(preset,targetH){
+  if(ezTemplateCache[preset])return ezTemplateCache[preset];
+  const p=(async()=>{
+    if(!window.EZTREE){                                   // wait for the CDN module (up to ~12s)
+      await new Promise((res,rej)=>{let n=0;const iv=setInterval(()=>{
+        if(window.EZTREE){clearInterval(iv);res();}
+        else if(window.EZTREE_ERROR||n++>120){clearInterval(iv);rej(new Error(window.EZTREE_ERROR||'zaman aşımı'));}},100);});
+    }
+    const glb=await window.EZTREE.generateGLB(preset,(Math.random()*1e5)|0);
+    const scene=await new Promise((res,rej)=>new THREE.GLTFLoader().parse(glb,'',g=>res(g.scene),rej));
+    scene.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
+    const box=new THREE.Box3().setFromObject(scene),hh=Math.max(.001,box.max.y-box.min.y);
+    scene.scale.setScalar((targetH||8)/hh);
+    const box2=new THREE.Box3().setFromObject(scene);scene.position.y=-box2.min.y; // sit base on ground
+    const root=new THREE.Group();root.add(scene);return root;
+  })();
+  ezTemplateCache[preset]=p;return p;
+}
+async function placeEzTree(preset,x,z){
+  if(window.EZTREE_ERROR){alert('Ağaç modülü yüklenemedi (internet?):\n'+window.EZTREE_ERROR);return;}
+  const opt=TREE_OPTIONS.find(o=>o.preset===preset)||{h:8};
+  let tmpl;
+  try{tmpl=await getEzTemplate(preset,opt.h);}
+  catch(e){console.error('placeEzTree',e);alert('Ağaç oluşturulamadı: '+(e&&e.message||e));return;}
+  const obj=tmpl.clone(true);
+  obj.scale.multiplyScalar(0.88+Math.random()*0.28);
+  obj.rotation.y=Math.random()*Math.PI*2;
+  obj.position.set(x,0,z);
+  obj.userData.isEzTree=true;obj.userData.ezPreset=preset;
+  objectGroup.add(obj);STATE.objects3D.push({type:'eztree',mesh:obj});
+}
+function openTreeMenu(){
+  if(!treeMenuEl){
+    treeMenuEl=document.createElement('div');
+    treeMenuEl.style.cssText='position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35)';
+    const card=document.createElement('div');
+    card.style.cssText='background:#fff;border-radius:14px;padding:18px 20px;box-shadow:0 8px 30px rgba(0,0,0,.3);max-width:420px;font:14px system-ui,sans-serif';
+    let html='<div style="font-weight:700;color:#2D6A4F;font-size:16px;margin-bottom:2px">Ağaç / Bitki Seç</div>'+
+      '<div style="color:#888;font-size:12px;margin-bottom:12px">Bir tür seçin, sonra zemine tıklayarak yerleştirin</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    TREE_OPTIONS.forEach((o,i)=>{html+='<button data-i="'+i+'" style="font:inherit;padding:11px 10px;border:1px solid #cfd8cf;border-radius:9px;background:#f7faf7;cursor:pointer;text-align:left">'+
+      '<span style="font-size:18px;margin-right:6px">'+o.emoji+'</span>'+o.tr+'</button>';});
+    html+='</div><div style="text-align:right;margin-top:14px"><button id="treeMenuCancel" style="font:inherit;padding:7px 14px;border:1px solid #ccd;border-radius:8px;background:#fff;cursor:pointer">İptal</button></div>';
+    card.innerHTML=html;treeMenuEl.appendChild(card);
+    treeMenuEl.addEventListener('click',ev=>{
+      if(ev.target===treeMenuEl){closeTreeMenu();return;}
+      const b=ev.target.closest('button');if(!b)return;
+      if(b.id==='treeMenuCancel'){closeTreeMenu();return;}
+      if(b.dataset.i!=null)chooseTree(TREE_OPTIONS[+b.dataset.i]);
+    });
+    document.body.appendChild(treeMenuEl);
+  }
+  treeMenuEl.style.display='flex';
+}
+function closeTreeMenu(){if(treeMenuEl)treeMenuEl.style.display='none';}
+function chooseTree(opt){
+  closeTreeMenu();
+  eraserMode=false;threeCanvas.classList.remove('eraser-cursor');
+  placementMode='eztree:'+opt.preset;ezPlacement=opt;
+  document.querySelectorAll('.palette-item').forEach(x=>x.classList.remove('active'));
+  const btn=document.querySelector('.palette-item[data-obj="tree-menu"]');if(btn)btn.classList.add('active');
+  if(window.EZTREE)getEzTemplate(opt.preset,opt.h).catch(e=>console.error(e));  // prewarm so first click is ready
+  clearGhost();
+  if(threeInited&&threeScene){ghostMesh=createObj(placementMode,0,-100);threeScene.add(ghostMesh);}
+}
+
 document.querySelectorAll('.palette-item').forEach(b=>{b.addEventListener('click',function(){
   const type=this.dataset.obj;
   document.querySelectorAll('.palette-item').forEach(x=>x.classList.remove('active'));
@@ -4524,6 +4603,7 @@ document.querySelectorAll('.palette-item').forEach(b=>{b.addEventListener('click
   // Eraser mode
   if(type==='eraser'){eraserMode=!eraserMode;placementMode=null;if(eraserMode)this.classList.add('active');threeCanvas.classList.toggle('eraser-cursor',eraserMode);clearGhost();return}
   eraserMode=false;threeCanvas.classList.remove('eraser-cursor');
+  if(type==='tree-menu'){clearGhost();placementMode=null;openTreeMenu();return}
   if(placementMode===type){placementMode=null;clearGhost();return}
   this.classList.add('active');placementMode=type;
   // Create ghost preview
@@ -4592,6 +4672,11 @@ threeCanvas.addEventListener('pointerdown',function(e){
       placementMode=null;
       document.querySelectorAll('.palette-item').forEach(b=>b.classList.remove('active'));
       return;
+    }
+    // EZ-Tree (library) async placement from the Turkish tree/plant menu
+    if(placementMode&&placementMode.indexOf('eztree:')===0){
+      placeEzTree(placementMode.slice(7),int.x,int.z);
+      return; // stay in placement mode; placeholder ghost keeps following
     }
     // Single-click placement (trees, etc) — stay in placement mode for rapid placing
     const obj=createObj(placementMode,int.x,int.z);
@@ -4722,7 +4807,7 @@ threeCanvas.addEventListener('pointermove',function(e){
 // Delete/Escape keys
 document.addEventListener('keydown',e=>{
   if(e.key==='Delete'&&selectedObj3D&&STATE.view==='3d'){const wasPool=selectedObj3D.userData&&selectedObj3D.userData.isPool;objectGroup.remove(selectedObj3D);STATE.objects3D=STATE.objects3D.filter(x=>x.mesh!==selectedObj3D);selectedObj3D=null;hideRotateRing();if(wasPool)refreshPoolGround()}
-  if(e.key==='Escape'){eraserMode=false;placementMode=null;clearGhost();selectedObj3D=null;hideRotateRing();threeCanvas.classList.remove('eraser-cursor');document.querySelectorAll('.palette-item').forEach(b=>b.classList.remove('active'))}
+  if(e.key==='Escape'){eraserMode=false;placementMode=null;clearGhost();closeTreeMenu();selectedObj3D=null;hideRotateRing();threeCanvas.classList.remove('eraser-cursor');document.querySelectorAll('.palette-item').forEach(b=>b.classList.remove('active'))}
 });
 
 var keyPan={l:0,r:0,u:0,d:0};
