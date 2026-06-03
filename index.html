@@ -381,11 +381,8 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
   <!-- Top bar — replaces sidebar -->
   <div id="topBar">
     <select id="designSelect" class="tb-select" aria-label="Tasarım seçimi">
-      <option value="optimum9" selected>Plan A — 70m² + Çıkma + Veranda</option>
+      <option value="planA" selected>Plan A — Sıralı Evler</option>
       <option value="optimum5">Plan B — Y-Radyal</option>
-      <option value="optimum8">Plan C — 80m² + Çıkma + Veranda</option>
-      <option value="planD">Plan D — Tek Bina (Orta Garaj)</option>
-      <option value="planE">Plan E — Simetrik Bağlı Evler</option>
       <option value="serbest">Serbest</option>
     </select>
     <div class="tb-sun" id="topSun">
@@ -408,6 +405,15 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
       <button data-f3size="f1">F3 = 1.Kat</button>
     </div>
     <div class="tb-actions">
+      <div class="tb-toggle" id="planSizeToggle" title="Villa boyutu (A & B)">
+        <button data-psize="70" class="active">70 m²</button>
+        <button data-psize="80">80 m²</button>
+      </div>
+      <div class="tb-toggle" id="planConnToggle" title="Bağlantı tipi">
+        <button data-pconn="separate" class="active">Ayrık</button>
+        <button data-pconn="garage">Garajlı</button>
+        <button data-pconn="room">Odalı</button>
+      </div>
       <button id="roomBtn" class="tb-room" title="Oda Düzeni (iç duvarlar)">&#128715; Oda</button>
       <div class="tb-toggle" id="topViewToggle">
         <button data-view="2d">2D</button>
@@ -713,6 +719,7 @@ const STATE={
   pVillaPolys:[[],[],[]],pOptimalAngle:null,pRadialResult:null,pCommonRectAB:null,pClipC:null,
   planD:false, pGarageA:null, pGarageB:null, pGarageC:null, pGarageDoor:null,   // Plan D: per-villa attached garages
   planE:false, pE:null,   // Plan E: symmetric F1 extensions joining the villas (see computeVillaPolys)
+  planSize:70, planConn:'separate',   // Plan A unified config: villa size (70|80) × connection (separate|garage|room)
 
   yCenter:[18,25],
   yEdgePts:[{edge:4,t:0.5,edges:[2,3,4]},{edge:1,t:0.5},{edge:0,t:0.5}],
@@ -840,6 +847,40 @@ function computeParcels(){
   STATE.pParcels[0]=parcelSliceBand(tMin,STATE.pDivT1);STATE.pParcels[1]=parcelSliceBand(STATE.pDivT1,STATE.pDivT2);STATE.pParcels[2]=parcelSliceBand(STATE.pDivT2,tMax);
   STATE.pBuildParcels[0]=clipBuildBand(tMin,STATE.pDivT1-3);STATE.pBuildParcels[1]=clipBuildBand(STATE.pDivT1+3,STATE.pDivT2-3);STATE.pBuildParcels[2]=clipBuildBand(STATE.pDivT2+3,tMax);
 }
+// Front-wall alignment shared by Plans A/C/D/E: perp-align Villa B to Villa A's road wall, then straighten
+// Villa C's road-front (its gap-side road corner … P4-corner) onto that same shared front line. Mutates
+// STATE.pCommonRectAB.rects[1] and STATE.pClipC in place. Pure layout — no garages or connecting wings.
+// (Plan D and Plan E currently inline their own copies with extra steps; this is the standalone version.)
+function alignVillasFront(){
+  const R=STATE.pCommonRectAB;
+  if(!R||!R.rects||!R.rects[0]||!R.rects[1]||!STATE.pClipC||STATE.pClipC.length<3) return;
+  const pux=-pRoadNy, puy=pRoadNx;
+  const rx=(P2[0]+P3[0]+P4[0]+P5[0]+P6[0])/5, ry=(P2[1]+P3[1]+P4[1]+P5[1]+P6[1])/5, roadPerp=rx*pux+ry*puy;
+  // 1) Perp-align Villa B to Villa A along the road→garden axis (their road walls line up).
+  {const _ca=polyCentroid(R.rects[0]), _cb=polyCentroid(R.rects[1]);
+   const _pd=(_ca[0]-_cb[0])*pux+(_ca[1]-_cb[1])*puy; R.rects[1]=R.rects[1].map(p=>[p[0]+pux*_pd,p[1]+puy*_pd]);}
+  const cB=polyCentroid(R.rects[1]);
+  // Shared front line = Villa A's road-side perp coordinate.
+  let frontPerp=null,_fpd=1e9; for(const c of R.rects[0]){const pv=c[0]*pux+c[1]*puy,dd=Math.abs(pv-roadPerp);if(dd<_fpd){_fpd=dd;frontPerp=pv;}}
+  // 2) Reshape Villa C: find its gap-facing wall (nearest B), slide its road corner onto the front line, then
+  //    replace the road-front (roadC … P4-corner) with the straight edge q0 → P4, keeping the garden side.
+  const rect=STATE.pClipC, m=rect.length;
+  let bi=0,bd=1e9; for(let i=0;i<m;i++){const a=rect[i],b=rect[(i+1)%m];const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2,d=Math.hypot(mx-cB[0],my-cB[1]);if(d<bd){bd=d;bi=i;}}
+  const E0=rect[bi], E1=rect[(bi+1)%m];
+  const pp0=E0[0]*pux+E0[1]*puy, pp1=E1[0]*pux+E1[1]*puy;
+  const roadC=(Math.abs(pp0-roadPerp)<=Math.abs(pp1-roadPerp))?E0:E1, gardC=(roadC===E0)?E1:E0;
+  let ax=gardC[0]-roadC[0], ay=gardC[1]-roadC[1]; const al=Math.hypot(ax,ay)||1; ax/=al; ay/=al;
+  let q0=[roadC[0],roadC[1]];
+  {const ad=ax*pux+ay*puy; if(Math.abs(ad)>1e-6){const t=(frontPerp-(roadC[0]*pux+roadC[1]*puy))/ad; q0=[roadC[0]+ax*t, roadC[1]+ay*t];}}
+  let rIdx=0,rb=1e9; for(let i=0;i<m;i++){const d=Math.hypot(rect[i][0]-roadC[0],rect[i][1]-roadC[1]);if(d<rb){rb=d;rIdx=i;}}
+  let bIdx=0,bb=1e9; for(let i=0;i<m;i++){const d=Math.hypot(rect[i][0]-P4[0],rect[i][1]-P4[1]);if(d<bb){bb=d;bIdx=i;}}
+  if(rIdx===bIdx) return;
+  function arc(dir){const out=[];let i=rIdx;while(true){i=(i+dir+m)%m; if(i===bIdx)break; out.push(rect[i]);} return out;}
+  function roadness(vs){if(!vs.length)return -1e9; let s=0; for(const v of vs)s+=Math.abs((v[0]*pux+v[1]*puy)-roadPerp); return s/vs.length;}
+  const fwd=arc(1), bwd=arc(-1), garden=(roadness(fwd)>=roadness(bwd)?fwd:bwd);
+  const newC=[q0, rect[bIdx]].concat(garden.slice().reverse());
+  if(newC.length>=3) STATE.pClipC=newC;
+}
 function computeVillaPolys(){
   const px=-pRoadNy,py=pRoadNx,rx=(P2[0]+P3[0]+P4[0]+P5[0]+P6[0])/5,ry=(P2[1]+P3[1]+P4[1]+P5[1]+P6[1])/5;
   function rsn(bp){const c=polyCentroid(bp),dot=(rx-c[0])*px+(ry-c[1])*py;return dot>=0?[px,py]:[-px,-py]}
@@ -854,6 +895,9 @@ function computeVillaPolys(){
     STATE.pCommonRectAB=findMaxCommonRect([0,1],area,flip);
     const bpC=STATE.pBuildParcels[2];
     if(bpC&&bpC.length>=3&&polyArea(bpC)>=70){const[nx,ny]=rsn(bpC);let p=clipToArea(bpC,70,nx,ny);if(p.length>=5){const c1=p[0],c2=p[1],dx=c2[0]-c1[0],dy=c2[1]-c1[1],l=Math.hypot(dx,dy),t=Math.min(6/l,1);p=[p[0],[c1[0]+t*dx,c1[1]+t*dy],...p.slice(2)]}STATE.pClipC=p}else STATE.pClipC=bpC||[]
+    // Plan A (optimum9) & Plan C (optimum8): adopt Plan D/E's cleaner front alignment (B perp-aligned to A,
+    // C's road-front straightened). Plans D/E do their own alignment in their branches, so skip here for them.
+    if((STATE.divDir==='optimum8'||STATE.divDir==='optimum9') && !STATE.planD && !STATE.planE) alignVillasFront();
   }else{STATE.pCommonRectAB=null;STATE.pClipC=null}
   // Plan D: move Villa B 2m toward C (A–B gap → 8m), then attach a 4×6 garage to each of A & B in that gap.
   STATE.pGarageA=null; STATE.pGarageB=null; STATE.pGarageC=null; STATE.pGarageDoor=null;
@@ -3180,10 +3224,20 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   var ux2=(villaKey&&STATE.interiors[villaKey]&&STATE.interiors[villaKey].f2)?STATE.interiors[villaKey].f2.exwin:null;
   var edited1=!!ux1, edited2=!!ux2;
   var autoWin1=[], autoWin2=[];
-  // Plan E: edges where a connecting wing joins — skip auto windows there (the wall is opened to the wing).
-  var peSharedEdges={};
+  // Plan E: wings joining this villa. Locate each wing's villa-side edge by its q0→q1 midpoint (a
+  // winding-INDEPENDENT lookup — robust to the CCW normalization that reverses Villa C's vertex order and
+  // would invalidate a stored edge index). Auto windows are skipped on these edges; the wall is opened below.
+  var peWings=[], peSharedEdges={};
   if(STATE.planE && STATE.pE && STATE.pE.exts && villaKey){
-    STATE.pE.exts.forEach(function(x){ if(x.key===villaKey && x.w && x.w.bi>=0) peSharedEdges[x.w.bi]=true; });
+    STATE.pE.exts.forEach(function(x){
+      if(x.key!==villaKey || !x.quad) return;
+      var q0=x.quad[0], q1=x.quad[1], mx=(q0[0]+q1[0])/2, my=(q0[1]+q1[1])/2, bi=-1, bd=1e9;
+      for(var i=0;i<n;i++){var ee=edges[i]; var tt=Math.max(0,Math.min(ee.len,(mx-ee.ax)*ee.ux+(my-ee.ay)*ee.uy)); var pxx=ee.ax+tt*ee.ux, pyy=ee.ay+tt*ee.uy, dd=Math.hypot(mx-pxx,my-pyy); if(dd<bd){bd=dd;bi=i;}}
+      if(bi<0) return;
+      var e=edges[bi];
+      var t0=((q0[0]-e.ax)*e.ux+(q0[1]-e.ay)*e.uy)/e.len, t1=((q1[0]-e.ax)*e.ux+(q1[1]-e.ay)*e.uy)/e.len;
+      peWings.push({bi:bi, t0:t0, t1:t1}); peSharedEdges[bi]=true;
+    });
   }
   var openingsF1=[];
   for(var foi=0;foi<n;foi++){
@@ -3207,17 +3261,12 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     for(var _gi=0;_gi<n;_gi++){var _ge=edges[_gi]; var _t=((_gd[0]-_ge.ax)*_ge.ux+(_gd[1]-_ge.ay)*_ge.uy)/_ge.len; _t=Math.max(0,Math.min(1,_t)); var _px=_ge.ax+_t*_ge.len*_ge.ux,_py=_ge.ay+_t*_ge.len*_ge.uy,_d=Math.hypot(_px-_gd[0],_py-_gd[1]); if(_d<_bd){_bd=_d;_bi=_gi;_bt=_t;}}
     if(_bi>=0 && openingsF1[_bi]){ var _hw=(0.9/2)/edges[_bi].len; openingsF1[_bi].push({t:Math.max(_hw,Math.min(1-_hw,_bt)), width:0.9, height:doorH3, sillY:0, type:'door'}); }
   }
-  // Plan E: fully open the F1 wall where each connecting wing joins the house, so the wing reads as one
-  // continuous room with the villa. Each wing gives its gap-facing edge (w.bi) and the q0→q1 span on it.
-  if(STATE.planE && STATE.pE && STATE.pE.exts && villaKey){
-    STATE.pE.exts.filter(function(x){return x.key===villaKey;}).forEach(function(x){
-      var bi=x.w.bi; if(bi<0 || bi>=n || !openingsF1[bi]) return;
-      var e=edges[bi], q0=x.quad[0], q1=x.quad[1];
-      var t0=((q0[0]-e.ax)*e.ux+(q0[1]-e.ay)*e.uy)/e.len, t1=((q1[0]-e.ax)*e.ux+(q1[1]-e.ay)*e.uy)/e.len;
-      var tc=Math.max(0,Math.min(1,(t0+t1)/2)), wmeters=Math.max(0.5, Math.abs(t1-t0)*e.len-0.2);
-      openingsF1[bi].push({t:tc, width:wmeters, height:F1, sillY:0, type:'door'});
-    });
-  }
+  // Plan E: fully open the F1 wall over each wing's q0→q1 span so the wing reads as one room with the villa.
+  peWings.forEach(function(pw){
+    if(!openingsF1[pw.bi]) return;
+    var e=edges[pw.bi], tc=Math.max(0,Math.min(1,(pw.t0+pw.t1)/2)), wmeters=Math.max(0.5, Math.abs(pw.t1-pw.t0)*e.len-0.2);
+    openingsF1[pw.bi].push({t:tc, width:wmeters, height:F1, sillY:0, type:'door'});
+  });
 
   var openingsF2=[];
   for(var foi2=0;foi2<f2n;foi2++){
@@ -5714,21 +5763,55 @@ document.querySelectorAll('#villaStylePicker .vs-grid').forEach(function(grid){
 (function setupTopBar(){
   // Design (mode + divDir) dropdown
   var designSelect=document.getElementById('designSelect');
+  var planSizeToggle=document.getElementById('planSizeToggle');
+  var planConnToggle=document.getElementById('planConnToggle');
+  // Plan A is one configurable plan: villa size (70|80) × connection (separate|garage|room). The toggles
+  // drive divDir (optimum9|optimum8) and the planD/planE flags; they show only when Plan A is selected.
+  function applyPlanAConfig(){
+    STATE.planD=(STATE.planConn==='garage');
+    STATE.planE=(STATE.planConn==='room');
+    STATE.divDir=(STATE.planSize===80)?'optimum8':'optimum9';
+    STATE.pOptimalAngle=null;
+    var dirSel=document.getElementById('dirSelect'); if(dirSel) dirSel.value=STATE.divDir;
+    pRecalcAll();
+  }
+  function syncPlanAToggles(){
+    var on=(designSelect.value==='planA');
+    if(planSizeToggle)planSizeToggle.style.display=on?'':'none';
+    if(planConnToggle)planConnToggle.style.display=on?'':'none';
+  }
   designSelect.addEventListener('change',function(){
     var v=this.value;
-    STATE.planD=(v==='planD');   // Plan D reuses Plan C (optimum8) geometry + a mid garage joining the villas
-    STATE.planE=(v==='planE');   // Plan E reuses Plan C (optimum8) geometry + symmetric F1 extensions joining the villas
-    if(v==='serbest'){
+    syncPlanAToggles();
+    if(v==='planA'){
+      var parcelTab=document.querySelector('.sb-tab[data-mode="parcelled"]');
+      if(parcelTab && !parcelTab.classList.contains('active'))parcelTab.click();
+      applyPlanAConfig();
+    }else if(v==='serbest'){
+      STATE.planD=false; STATE.planE=false;
       var freeTab=document.querySelector('.sb-tab[data-mode="free"]');
       if(freeTab)freeTab.click();
     }else{
+      STATE.planD=false; STATE.planE=false;
       var parcelTab=document.querySelector('.sb-tab[data-mode="parcelled"]');
       if(parcelTab && !parcelTab.classList.contains('active'))parcelTab.click();
       var dirSel=document.getElementById('dirSelect');
-      var dirVal=(v==='planD'||v==='planE')?'optimum8':v;
-      if(dirSel){dirSel.value=dirVal;dirSel.dispatchEvent(new Event('change'))}
+      if(dirSel){dirSel.value=v;dirSel.dispatchEvent(new Event('change'))}
     }
   });
+  function wirePlanToggle(toggle, attr, apply){
+    if(!toggle)return;
+    toggle.querySelectorAll('button').forEach(function(b){
+      b.addEventListener('click',function(){
+        if(b.classList.contains('active'))return;
+        toggle.querySelectorAll('button').forEach(function(x){x.classList.remove('active')});
+        b.classList.add('active');
+        apply(b.getAttribute(attr));
+      });
+    });
+  }
+  wirePlanToggle(planSizeToggle,'data-psize',function(val){STATE.planSize=parseInt(val,10);applyPlanAConfig();});
+  wirePlanToggle(planConnToggle,'data-pconn',function(val){STATE.planConn=val;applyPlanAConfig();});
 
   // Sun slider — sync top bar with hidden sidebar slider
   var topSlider=document.getElementById('topSunSlider');
@@ -5773,7 +5856,9 @@ document.querySelectorAll('#villaStylePicker .vs-grid').forEach(function(grid){
 
   // Set the initial design select so it reflects state on load
   if(STATE.mode==='free'){designSelect.value='serbest'}
+  else if(STATE.divDir==='optimum8'||STATE.divDir==='optimum9'){designSelect.value='planA'}
   else if(STATE.divDir){designSelect.value=STATE.divDir}
+  syncPlanAToggles();
 })();
 </script>
 </body>
