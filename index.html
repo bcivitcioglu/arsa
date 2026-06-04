@@ -296,6 +296,14 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 #modeToggle.is-character .mode-label:nth-child(1){color:#aaa}
 #modeToggle:not(.is-character) .mode-label:nth-child(3){color:#aaa}
 #fpHint{position:absolute;top:90px;right:10px;z-index:25;padding:8px 12px;background:rgba(20,20,20,.78);color:#fff;border-radius:6px;font-size:12px;display:none;box-shadow:0 2px 6px rgba(0,0,0,.3);max-width:320px}
+#areaTable{position:absolute;top:52px;left:10px;z-index:25;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-family:inherit;font-size:11px;color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.08);user-select:none;pointer-events:none;display:none}
+#areaTable .at-title{font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px;letter-spacing:.02em;text-transform:uppercase}
+#areaTable table{border-collapse:collapse}
+#areaTable th,#areaTable td{padding:1px 7px;text-align:right;font-variant-numeric:tabular-nums}
+#areaTable th{font-weight:600;color:var(--muted);border-bottom:1px solid var(--border)}
+#areaTable th:first-child,#areaTable td:first-child{text-align:left;font-weight:700}
+#areaTable td.at-total{font-weight:700}
+#areaTable .at-foot{margin-top:5px;font-size:10px;color:var(--muted);line-height:1.4}
 #fpPrompt{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:26;padding:10px 18px;background:rgba(0,0,0,.7);color:#fff;border-radius:8px;font-size:14px;font-weight:600;display:none;pointer-events:none;text-shadow:0 1px 2px #000}
 #touchControls{position:absolute;inset:0;z-index:24;pointer-events:none;display:none}
 #touchStick{position:absolute;bottom:24px;left:24px;width:130px;height:130px;border-radius:50%;background:rgba(0,0,0,.25);border:2px solid rgba(255,255,255,.5);pointer-events:auto;touch-action:none}
@@ -567,6 +575,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
 
   <div id="viewport">
     <svg id="map" viewBox="0 0 600 600"></svg>
+    <div id="areaTable"></div>
     <canvas id="threeCanvas" style="display:none"></canvas>
     <label id="modeToggle" title="Karakter modunu aç/kapat">
       <span class="mode-label">Normal</span>
@@ -953,6 +962,65 @@ function alignVillasFront(){
   const newC=[q0, rect[bIdx]].concat(garden.slice().reverse());
   if(newC.length>=3) STATE.pClipC=newC;
 }
+// ── Plan E villa+wing union (one editable outline) ──────────────────────────────────────────────────
+// Merge each connecting-wing quad into the villa rectangle, producing one polygon AND an `edgeMap` that
+// tells the 3D builder where a window placed on each union edge belongs: back onto a CORE-RECT edge
+// (a segment of it), onto a WING quad edge (the wing's exterior end wall), or a 'party'/'open' seam (no
+// window). Winding-independent: each wing is matched to the rect edge nearest its villa-side midpoint, and
+// all ordering is done in the rect edge's own parameter direction — so it stays correct after CCW flips.
+function unionExts(rect, items){
+  const m=rect.length, out=[], edgeMap=[];
+  function rparam(i,P){const A=rect[i],B=rect[(i+1)%m],ex=B[0]-A[0],ey=B[1]-A[1],l2=(ex*ex+ey*ey)||1;return ((P[0]-A[0])*ex+(P[1]-A[1])*ey)/l2;}
+  function wparam(q,k,P){const A=q[k],B=q[(k+1)%4],ex=B[0]-A[0],ey=B[1]-A[1],l2=(ex*ex+ey*ey)||1;return ((P[0]-A[0])*ex+(P[1]-A[1])*ey)/l2;}
+  function nearEdge(P){let bi=0,bd=1e9;for(let i=0;i<m;i++){const A=rect[i],B=rect[(i+1)%m],ex=B[0]-A[0],ey=B[1]-A[1],l2=(ex*ex+ey*ey)||1;let t=((P[0]-A[0])*ex+(P[1]-A[1])*ey)/l2;t=Math.max(0,Math.min(1,t));const px=A[0]+t*ex,py=A[1]+t*ey,d=Math.hypot(P[0]-px,P[1]-py);if(d<bd){bd=d;bi=i;}}return bi;}
+  const byEdge={};
+  for(const it of (items||[])){const q=it.quad; if(!q||q.length<4)continue; const mid=[(q[0][0]+q[1][0])/2,(q[0][1]+q[1][1])/2]; const ai=nearEdge(mid); (byEdge[ai]=byEdge[ai]||[]).push(it);}
+  for(let i=0;i<m;i++){
+    const here=(byEdge[i]||[]).map(it=>{
+      const q=it.quad, rp0=rparam(i,q[0]), rp1=rparam(i,q[1]);
+      const lowOnWall=rp0<=rp1?q[0]:q[1], lowOuter=rp0<=rp1?q[3]:q[2], hiOuter=rp0<=rp1?q[2]:q[3], hiOnWall=rp0<=rp1?q[1]:q[0];
+      const endLow=rp0<=rp1?3:1, endHi=rp0<=rp1?1:3;   // wing quad edge index for each exterior end wall
+      return {it,q,lowOnWall,lowOuter,hiOuter,hiOnWall,endLow,endHi,key:Math.min(rp0,rp1)};
+    }).sort((a,b)=>a.key-b.key);
+    if(!here.length){ out.push(rect[i]); edgeMap.push({target:'rect',rectEdge:i,pA:0,pB:1}); continue; }
+    out.push(rect[i]); edgeMap.push({target:'rect',rectEdge:i,pA:0,pB:rparam(i,here[0].lowOnWall)});
+    for(let d=0;d<here.length;d++){ const h=here[d], id=h.it.key+'|'+h.it.neighbor;
+      out.push(h.lowOnWall); edgeMap.push({target:'wing',extId:id,wingEdge:h.endLow,pA:wparam(h.q,h.endLow,h.lowOnWall),pB:wparam(h.q,h.endLow,h.lowOuter)});
+      out.push(h.lowOuter);  edgeMap.push({target:h.it.divider?'party':'open'});
+      out.push(h.hiOuter);   edgeMap.push({target:'wing',extId:id,wingEdge:h.endHi,pA:wparam(h.q,h.endHi,h.hiOuter),pB:wparam(h.q,h.endHi,h.hiOnWall)});
+      const nextP=(d+1<here.length)?rparam(i,here[d+1].lowOnWall):1;
+      out.push(h.hiOnWall);  edgeMap.push({target:'rect',rectEdge:i,pA:rparam(i,h.hiOnWall),pB:nextP});
+    }
+  }
+  out.edgeMap=edgeMap;
+  return out;
+}
+// The union edge index whose start vertex matches rect vertex A (the chosen front edge) — used so the
+// front door/windows land on the same physical wall in both the editor and the build.
+function unionEdgeAt(uPoly, A){let bi=0,bd=1e9;for(let i=0;i<uPoly.length;i++){const d=Math.hypot(uPoly[i][0]-A[0],uPoly[i][1]-A[1]);if(d<bd){bd=d;bi=i;}}return bi;}
+// Auto exterior windows on the villa+wing union (the editor's starting point). Front edge gets the
+// 3-window+door arrangement; every other real wall (rect or wing end wall) gets a centred window.
+function unionAutoWin(uPoly, frontIdx, doorT, bigT, smallT, wH, wSill){
+  const em=uPoly.edgeMap||[], nn=uPoly.length, out=[];
+  for(let i=0;i<nn;i++){ const mp=em[i]; if(!mp||(mp.target!=='rect'&&mp.target!=='wing')) continue;
+    const a=uPoly[i], b=uPoly[(i+1)%nn], len=Math.hypot(b[0]-a[0],b[1]-a[1]); if(len<1.4) continue;
+    if(i===frontIdx){ out.push({edge:i,t:bigT,width:len*0.5,height:wH,sillY:wSill}); out.push({edge:i,t:doorT,width:1.4,type:'door'}); out.push({edge:i,t:smallT,width:len*0.2,height:wH,sillY:wSill}); }
+    else out.push({edge:i,t:0.5,width:len*0.55,height:wH,sillY:wSill});
+  }
+  return out;
+}
+// Route a union-indexed window list onto the convex sub-shapes the 3D builder uses: rect edges (the villa)
+// and wing quad edges (the connecting room). Windows on a 'party'/'open' seam are dropped.
+function routeUnionWindows(list, uPoly){
+  const em=uPoly.edgeMap||[], rectW=[], wings={};
+  (list||[]).forEach(function(w){ const mp=em[w.edge]; if(!mp) return;
+    const tt=mp.pA+(w.t!=null?w.t:0.5)*(mp.pB-mp.pA);
+    const rec={t:tt, width:w.width, height:w.height, sillY:w.sillY, type:w.type};
+    if(mp.target==='rect'){ rec.edge=mp.rectEdge; rectW.push(rec); }
+    else if(mp.target==='wing'){ rec.edge=mp.wingEdge; (wings[mp.extId]=wings[mp.extId]||[]).push(rec); }
+  });
+  return {rect:rectW, wings:wings};
+}
 function computeVillaPolys(){
   const px=-pRoadNy,py=pRoadNx,rx=(P2[0]+P3[0]+P4[0]+P5[0]+P6[0])/5,ry=(P2[1]+P3[1]+P4[1]+P5[1]+P6[1])/5;
   function rsn(bp){const c=polyCentroid(bp),dot=(rx-c[0])*px+(ry-c[1])*py;return dot>=0?[px,py]:[-px,-py]}
@@ -966,7 +1034,17 @@ function computeVillaPolys(){
     const flip=(STATE.divDir==='optimum2'||STATE.divDir==='optimum4');
     STATE.pCommonRectAB=findMaxCommonRect([0,1],area,flip);
     const bpC=STATE.pBuildParcels[2];
-    if(bpC&&bpC.length>=3&&polyArea(bpC)>=70){const[nx,ny]=rsn(bpC);let p=clipToArea(bpC,70,nx,ny);if(p.length>=5){const c1=p[0],c2=p[1],dx=c2[0]-c1[0],dy=c2[1]-c1[1],l=Math.hypot(dx,dy),t=Math.min(6/l,1);p=[p[0],[c1[0]+t*dx,c1[1]+t*dy],...p.slice(2)]}STATE.pClipC=p}else STATE.pClipC=bpC||[]
+    if(bpC&&bpC.length>=3&&polyArea(bpC)>=70){const[nx,ny]=rsn(bpC);
+      // Villa C's garden/rear edge follows A&B's shared rear line (Plan A 70/80) so all three gardens align.
+      // Derive the clip *area* that lands C's rear on that line, then reuse the normal clip→çıkma pipeline.
+      // Reference rear = Villa A's rectangle (rects[0]), which is never moved by Plan D/E — so this applies
+      // to all connection modes (ayrık / garajlı / odalı); D and E only reshape C's road-front, not its rear.
+      let cTgt=70;const R=STATE.pCommonRectAB;
+      if((STATE.divDir==='optimum8'||STATE.divDir==='optimum9')&&R&&R.rects&&R.rects[0]){
+        const rp=rx*px+ry*py,gPerp=R.rects[0].map(c=>c[0]*px+c[1]*py).reduce((a,b)=>Math.abs(a-rp)>Math.abs(b-rp)?a:b);
+        const cClip=clipPolyByLine([...bpC],gPerp*px,gPerp*py,-px,-py);if(cClip.length>=3)cTgt=polyArea(cClip);
+      }
+      let p=clipToArea(bpC,cTgt,nx,ny);if(p.length>=5){const c1=p[0],c2=p[1],dx=c2[0]-c1[0],dy=c2[1]-c1[1],l=Math.hypot(dx,dy),t=Math.min(6/l,1);p=[p[0],[c1[0]+t*dx,c1[1]+t*dy],...p.slice(2)]}STATE.pClipC=p}else STATE.pClipC=bpC||[]
     // Plan A (optimum9) & Plan C (optimum8): adopt Plan D/E's cleaner front alignment (B perp-aligned to A,
     // C's road-front straightened). Plans D/E do their own alignment in their branches, so skip here for them.
     if((STATE.divDir==='optimum8'||STATE.divDir==='optimum9') && !STATE.planD && !STATE.planE) alignVillasFront();
@@ -1058,21 +1136,9 @@ function computeVillaPolys(){
       const q0=w.q0, q1=[w.q0[0]+w.ax*LEN, w.q0[1]+w.ay*LEN];
       return [q0, q1, [q1[0]+w.nx*DEP, q1[1]+w.ny*DEP], [q0[0]+w.nx*DEP, q0[1]+w.ny*DEP]];
     }
-    // Merge bump quads into a core polygon along their facing edges (insert each bump after its E0 vertex).
-    function unionExts(rect, items){
-      const m=rect.length, out=[];
-      for(let i=0;i<m;i++){
-        out.push(rect[i]);
-        for(const it of items){ if(it.w.bi!==i) continue;
-          const q=it.quad, w=it.w, ex=w.E1[0]-w.E0[0], ey=w.E1[1]-w.E0[1], el2=(ex*ex+ey*ey)||1;
-          const t0=((q[0][0]-w.E0[0])*ex+(q[0][1]-w.E0[1])*ey)/el2, t1=((q[1][0]-w.E0[0])*ex+(q[1][1]-w.E0[1])*ey)/el2;
-          // q[0]↔q[3] (outer), q[1]↔q[2] (outer); insert in increasing edge-parameter order
-          const lowOnWall=t0<=t1?q[0]:q[1], lowOuter=t0<=t1?q[3]:q[2], hiOuter=t0<=t1?q[2]:q[3], hiOnWall=t0<=t1?q[1]:q[0];
-          out.push(lowOnWall, lowOuter, hiOuter, hiOnWall);
-        }
-      }
-      return out;
-    }
+    // (unionExts is a global helper — see below. It merges each wing quad into the villa rectangle and
+    //  attaches an edgeMap so the ODA plan can edit the villa+wing as one outline. These in-block unions are
+    //  rebuilt from the CCW-normalized footprints further down, so their indices match the 3D builder.)
     const wAB=facingWall(rA,cB), wBA=facingWall(rB,cA), wBC=facingWall(rB,cC);
     let wCB=facingWall(rCp,cB,frontPerp);
     // Align Villa C's road-front exactly like Plan D: replace its road-front (roadC … P4-corner) with the
@@ -1121,6 +1187,16 @@ function computeVillaPolys(){
     if(STATE.pCommonRectAB&&STATE.pCommonRectAB.rects)STATE.pCommonRectAB.rects=STATE.pCommonRectAB.rects.map(function(r){return r?ccw(r):r;});
     if(STATE.pVillaPolys)STATE.pVillaPolys=STATE.pVillaPolys.map(function(p){return ccw(p);});
   })();
+  // Plan E: (re)build the villa+wing unions from the FINAL CCW-normalized footprints, so each union's
+  // edgeMap.rectEdge indices line up with the `edges` the 3D builder derives from the same polygons.
+  if(STATE.pE && STATE.pE.exts && STATE.pCommonRectAB && STATE.pCommonRectAB.rects){
+    var _R=STATE.pCommonRectAB.rects, _exts=STATE.pE.exts;
+    var _w=function(k){return _exts.filter(function(e){return e.key===k;});};
+    STATE.pE.unions={};
+    if(_R[0]&&_R[0].length>=3) STATE.pE.unions.A=unionExts(_R[0], _w('A'));
+    if(_R[1]&&_R[1].length>=3) STATE.pE.unions.B=unionExts(_R[1], _w('B'));
+    if(STATE.pClipC&&STATE.pClipC.length>=3) STATE.pE.unions.C=unionExts(STATE.pClipC, _w('C'));
+  }
 }
 function findMaxCommonRect(indices,tgt,flip){
   const sx=pRoadNx,sy=pRoadNy,px=-pRoadNy,py=pRoadNx;
@@ -1247,8 +1323,70 @@ function renderFreeDims(){let h='';const edges=[{a:P1,b:P2,l:'33.0m',o:18},{a:P2
 function renderParcelledDims(){let h='';const edges=[{a:P1,b:P2,l:'33.0m',o:18},{a:P2,b:P3,l:'29.8m',o:18},{a:P3,b:P4,l:'6.3m',o:12},{a:P4,b:P5,l:'13.6m',o:14},{a:P5,b:P6,l:'24.3m',o:14},{a:P6,b:P1,l:'29.3m',o:-18}];for(const e of edges)h+=dimOff(e.a,e.b,e.l,'var(--dg)','var(--dgb)',e.o);function p2p(p1,p2){let b={d:999};for(const p of p1)for(let i=0;i<p2.length;i++){const{d,proj}=ptSeg(p,p2[i],p2[(i+1)%p2.length]);if(d<b.d)b={d,from:p,to:proj}}for(const p of p2)for(let i=0;i<p1.length;i++){const{d,proj}=ptSeg(p,p1[i],p1[(i+1)%p1.length]);if(d<b.d)b={d,from:proj,to:p}}return b}for(const[i,j]of[[0,1],[1,2]]){const a=STATE.pBuildParcels[i],b=STATE.pBuildParcels[j];if(!a||!b||a.length<3||b.length<3)continue;const m=p2p(a,b);h+=dimSVG(m.from,m.to,m.d.toFixed(1)+'m','var(--db)','var(--dbb)')}return h}
 
 let baseCache='';
-function renderLight(){if(!baseCache)baseCache=renderBase();document.getElementById('map').innerHTML=baseCache+(STATE.mode==='free'?renderFreeMode():renderParcelledMode())}
-function renderFull(){baseCache=renderBase();const mode=STATE.mode==='free'?renderFreeMode():renderParcelledMode();const dims=STATE.showDims?(STATE.mode==='free'?renderFreeDims():renderParcelledDims()):'';const editor=(STATE.roomEdit&&STATE.roomEdit.active)?renderRoomEditor():'';document.getElementById('map').innerHTML=baseCache+mode+dims+editor}
+function renderLight(){if(!baseCache)baseCache=renderBase();document.getElementById('map').innerHTML=baseCache+(STATE.mode==='free'?renderFreeMode():renderParcelledMode());updateAreaTable()}
+function renderFull(){baseCache=renderBase();const mode=STATE.mode==='free'?renderFreeMode():renderParcelledMode();const dims=STATE.showDims?(STATE.mode==='free'?renderFreeDims():renderParcelledDims()):'';const editor=(STATE.roomEdit&&STATE.roomEdit.active)?renderRoomEditor():'';document.getElementById('map').innerHTML=baseCache+mode+dims+editor;updateAreaTable()}
+
+// Faithful replica of buildModernVilla's çıkma (cantilever) outline — MUST stay in sync with that function
+// (index.html buildModernVilla): the n===4 rectangle branch cantilevers the 2 short edges 1.5m; the n>=5
+// pentagon branch (Villa C) cantilevers every edge within 1.2m of the buildable boundary PLUS the shorter of
+// exactly two interior edges, mitering shared corners — so C overhangs on more edges and gains far more than
+// A/B. Returns the F2 (upper-floor) outline; identical to the input when nothing cantilevers.
+function cantF2Poly(poly2D,rectCantilever){
+  const n=poly2D.length; if(n<3)return poly2D;
+  let cx=0,cy=0; for(const p of poly2D){cx+=p[0];cy+=p[1];} cx/=n; cy/=n;
+  const edges=[];
+  for(let i=0;i<n;i++){const a=poly2D[i],b=poly2D[(i+1)%n];const dx=b[0]-a[0],dy=b[1]-a[1],l=Math.hypot(dx,dy)||1;let nx=-dy/l,ny=dx/l;const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;if((mx+nx-cx)**2+(my+ny-cy)**2<(mx-nx-cx)**2+(my-ny-cy)**2){nx=-nx;ny=-ny;}edges.push({len:l,nx,ny});}
+  const CANT_D=1.5; const isRoad=new Array(n).fill(false);
+  if(n===4){ if(!rectCantilever)return poly2D; if(edges[0].len<edges[1].len){isRoad[0]=isRoad[2]=true;}else{isRoad[1]=isRoad[3]=true;} }
+  else{ const TOL_ROAD=1.2;
+    for(let i=0;i<n;i++){const a=poly2D[i],b=poly2D[(i+1)%n];const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2;let minD=Infinity;for(let j=0;j<buildM.length;j++){const ba=buildM[j],bb=buildM[(j+1)%buildM.length];const bdx=bb[0]-ba[0],bdy=bb[1]-ba[1],bl2=bdx*bdx+bdy*bdy;if(bl2<1e-9)continue;let t=((mx-ba[0])*bdx+(my-ba[1])*bdy)/bl2;t=Math.max(0,Math.min(1,t));const px=ba[0]+t*bdx,py=ba[1]+t*bdy;const d=Math.hypot(mx-px,my-py);if(d<minD)minD=d;}isRoad[i]=minD<TOL_ROAD;}
+    const interior=[];for(let i=0;i<n;i++)if(!isRoad[i])interior.push(i);
+    if(interior.length===2){let s=interior[0];if(edges[interior[1]].len<edges[s].len)s=interior[1];isRoad[s]=true;}
+  }
+  if(!isRoad.some(Boolean))return poly2D;
+  const f2=[];
+  for(let vi=0;vi<n;vi++){const pI=(vi-1+n)%n,pR=isRoad[pI],nR=isRoad[vi],eP=edges[pI],eN=edges[vi],v=poly2D[vi];
+    if(pR&&nR){const a1x=poly2D[pI][0]+CANT_D*eP.nx,a1y=poly2D[pI][1]+CANT_D*eP.ny,a2x=v[0]+CANT_D*eP.nx,a2y=v[1]+CANT_D*eP.ny,b1x=v[0]+CANT_D*eN.nx,b1y=v[1]+CANT_D*eN.ny,b2x=poly2D[(vi+1)%n][0]+CANT_D*eN.nx,b2y=poly2D[(vi+1)%n][1]+CANT_D*eN.ny;const dM=(a1x-a2x)*(b1y-b2y)-(a1y-a2y)*(b1x-b2x);if(Math.abs(dM)>1e-6){const tM=((a1x-b1x)*(b1y-b2y)-(a1y-b1y)*(b1x-b2x))/dM;f2.push([a1x+tM*(a2x-a1x),a1y+tM*(a2y-a1y)]);}else f2.push([v[0]+CANT_D*(eP.nx+eN.nx)/2,v[1]+CANT_D*(eP.ny+eN.ny)/2]);}
+    else if(pR&&!nR){f2.push([v[0]+CANT_D*eP.nx,v[1]+CANT_D*eP.ny]);f2.push([v[0],v[1]]);}
+    else if(!pR&&nR){f2.push([v[0],v[1]]);f2.push([v[0]+CANT_D*eN.nx,v[1]+CANT_D*eN.ny]);}
+    else f2.push([v[0],v[1]]);
+  }
+  return f2;
+}
+// Per-house floor areas for the static 2D info table. Optimum rect+clipC modes only (A&B rectangles, C clipped).
+// F1 = body footprint (+ odalı connection, which is part of the house); F2 = the çıkma outline (cantF2Poly);
+// F3 (if 3-storey) = F1-body (set back) or F2 per the F3-size toggle. Garage is a separate ground structure
+// (≈24 m² each) — reported apart, never added into the house total. A&B cantilever only when the variant has
+// çıkma; Villa C (pentagon) cantilevers off the buildable boundary regardless, so its F2 is much larger.
+function villaFloorAreas(){
+  const R=STATE.pCommonRectAB;
+  if(!(R&&R.rects&&R.rects[0]&&R.rects[1]&&STATE.pClipC&&STATE.pClipC.length>=3))return null;
+  const dir=STATE.divDir, hasCikma=(dir==='optimum6'||dir==='optimum7'||dir==='optimum8'||dir==='optimum9');
+  const NF=STATE.threeStorey?3:2;
+  const connOf=k=>(STATE.planE&&STATE.pE&&STATE.pE.exts)?STATE.pE.exts.filter(e=>e.key===k).reduce((s,e)=>s+(e.quad&&e.quad.length>=4?polyArea(e.quad):0),0):0;
+  const garP={A:STATE.pGarageA,B:STATE.pGarageB,C:STATE.pGarageC};
+  const garOf=k=>{const g=garP[k];return(STATE.planD&&g&&g.length>=4)?polyArea(g):0;};
+  return [['A',R.rects[0],hasCikma],['B',R.rects[1],hasCikma],['C',STATE.pClipC,false]].map(([key,poly,rc])=>{
+    const body=polyArea(poly), f2body=polyArea(cantF2Poly(poly,rc));
+    const conn=connOf(key), garage=garOf(key);
+    const f1=body+conn, f2=f2body, f3=NF>=3?(STATE.f3MatchF1?body:f2body):0;
+    return {key,NF,f1,f2,f3,conn,garage,total:f1+f2+f3};
+  });
+}
+function updateAreaTable(){
+  const el=document.getElementById('areaTable'); if(!el)return;
+  const rows=(STATE.view!=='3d'&&STATE.mode==='parcelled')?villaFloorAreas():null;
+  if(!rows){el.style.display='none';return;}
+  el.style.display='block';
+  const NF=rows[0].NF, lot=['var(--lot1)','var(--lot2)','var(--lot3)'];
+  let h='<div class="at-title">Bina Alanları (m²)</div><table><thead><tr><th>Ev</th><th>F1</th><th>F2</th>'+(NF>=3?'<th>F3</th>':'')+'<th>Toplam</th></tr></thead><tbody>';
+  rows.forEach((r,i)=>{h+=`<tr style="color:${lot[i]}"><td>${r.key}</td><td>${r.f1.toFixed(0)}</td><td>${r.f2.toFixed(0)}</td>`+(NF>=3?`<td>${r.f3.toFixed(0)}</td>`:'')+`<td class="at-total">${r.total.toFixed(0)}</td></tr>`;});
+  h+='</tbody></table><div class="at-foot">Konut toplam: <b>'+rows.reduce((s,r)=>s+r.total,0).toFixed(0)+' m²</b>';
+  if(rows.some(r=>r.conn>0))h+=' · F1 odalı bağlantı dahil';
+  if(rows.some(r=>r.garage>0))h+='<br>Garaj (ayrı): '+rows.reduce((s,r)=>s+r.garage,0).toFixed(0)+' m²';
+  h+='</div>';
+  el.innerHTML=h;
+}
 
 // ═══════════════════════════════════════
 // DRAG & DROP
@@ -1455,9 +1593,10 @@ function roomVilla(){var vs=getEditableVillas();return vs.find(function(v){retur
 function roomFloorPoly(){var v=roomVilla();if(!v)return null;
   if(STATE.roomEdit.floor==='f3'&&STATE.f3MatchF1)return v.poly;   // F3 set back → F1 footprint
   if((STATE.roomEdit.floor==='f2'||STATE.roomEdit.floor==='f3')&&villaF2Poly[v.key]&&villaF2Poly[v.key].length>=3)return villaF2Poly[v.key];
-  // Plan E (room connection): joined villas are SEPARATE houses sharing a solid party wall. The ODA editor
-  // edits the CORE villa footprint — the same edge frame the 3D builder uses for exterior windows/doors —
-  // so anything placed here lands on the correct wall. (The connecting wing is a fixed structure, not edited here.)
+  // Plan E (room connection): on F1 the connecting wing is PART of the house, so the ODA plan edits the
+  // villa+wing UNION as one continuous outline — windows can be placed on the wing's outer walls too. The
+  // single-storey wing has no F2/F3, so those floors fall through to the core footprint above.
+  if(STATE.roomEdit.floor==='f1' && STATE.planE && STATE.pE && STATE.pE.unions && STATE.pE.unions[v.key] && STATE.pE.unions[v.key].length>=3) return STATE.pE.unions[v.key];
   return v.poly}
 function roomFrame(){var v=roomVilla();return v?villaOBB(v.poly):null}
 
@@ -1850,20 +1989,10 @@ function renderRoomEditor(){
       var ic=stairFootprintCorners(info.sx,info.sy,info.fdx,info.fdy,info.flip);   // flip-aware (matches the render)
       out+=stairOverlaySVG({corners:ic,sx:info.sx,sy:info.sy,fdx:info.fdx,fdy:info.fdy,pdx:info.pdx,pdy:info.pdy,L:info.L,w:info.w,front:F2,back:B2,style:info.style});}
   }
-  // Exterior DOORS for the current floor (reference only) — from captured meta.
-  var exo=(villaOpenMeta[v.key]&&villaOpenMeta[v.key][STATE.roomEdit.floor])||[];
+  // Exterior doors are NOT drawn here as a separate "reference" indicator — every door is placed by hand in
+  // the plan and drawn (editable) by the windows/doors pass below. A captured-meta indicator would just
+  // duplicate it and go stale (orphaned) the moment a door is moved or removed.
   var fc=polyCentroid(fp);
-  for(var xi=0;xi<exo.length;xi++){var op=exo[xi];
-    if(op.type!=='door')continue;                                          // windows are drawn (editable) below
-    if(op.type==='door'&&STATE.roomEdit.floor==='f2')continue;             // F2 balcony door: no indicator
-    var odx=op.x2-op.x1,ody=op.y2-op.y1,odl=Math.hypot(odx,ody)||1,onx=-ody/odl,ony=odx/odl;
-    if((fc[0]-op.x1)*onx+(fc[1]-op.y1)*ony<0){onx=-onx;ony=-ony}
-    var oa=S(op.x1,op.y1),ob=S(op.x2,op.y2);
-    out+='<line x1="'+oa[0].toFixed(1)+'" y1="'+oa[1].toFixed(1)+'" x2="'+ob[0].toFixed(1)+'" y2="'+ob[1].toFixed(1)+'" stroke="#fff" stroke-width="'+(0.30*sc)+'" stroke-linecap="butt"/>';
-    var leafW=[op.x1+onx*odl,op.y1+ony*odl],lf=S(leafW[0],leafW[1]);
-    out+='<line x1="'+oa[0].toFixed(1)+'" y1="'+oa[1].toFixed(1)+'" x2="'+lf[0].toFixed(1)+'" y2="'+lf[1].toFixed(1)+'" stroke="#1565C0" stroke-width="1.4"/>';
-    out+='<path d="M'+lf[0].toFixed(1)+','+lf[1].toFixed(1)+' A'+(odl*sc).toFixed(1)+','+(odl*sc).toFixed(1)+' 0 0 1 '+ob[0].toFixed(1)+','+ob[1].toFixed(1)+'" fill="none" stroke="#1565C0" stroke-width=".8" stroke-dasharray="2,1.5"/>';
-  }
   // Exterior WINDOWS — editable. Double cyan line on the wall + square end handles (resize grips).
   var redges=roomFloorEdges(), rwins=roomWindows(), winTool=(STATE.roomEdit.tool==='window');
   for(var wxi=0;wxi<rwins.length;wxi++){var pt=roomWinPts(rwins[wxi],redges); if(!pt)continue;
@@ -2185,7 +2314,7 @@ document.getElementById('downloadBtn').addEventListener('click',function(){
 let threeInited=false,threeScene,threeCamera,threeRenderer,threeControls,threeSunLight,threeAnimId=null,villaGroup,objectGroup,landFenceGroup;
 const VILLA_COLORS=[0xD85A30,0x185FA5,0x534AB7];
 
-document.querySelectorAll('#viewToggle .toggle-btn').forEach(b=>{b.addEventListener('click',function(){document.querySelectorAll('#viewToggle .toggle-btn').forEach(x=>x.classList.remove('active'));this.classList.add('active');STATE.view=this.dataset.view;const svg=document.getElementById('map'),cv=document.getElementById('threeCanvas'),sun=document.getElementById('sunSection'),pal=document.getElementById('objectPalette'),vsp=document.getElementById('villaStylePicker');if(STATE.view==='3d'){svg.style.display='none';cv.style.display='block';sun.style.display='';pal.classList.add('show');vsp.classList.add('show');document.getElementById('roomEditBar').classList.remove('show');document.getElementById('roomHint').classList.remove('show');document.getElementById('roomBtn').classList.remove('active');if(!threeInited)initThreeScene(cv);buildVillas3D();updateSun3D();animateThree()}else{svg.style.display='';cv.style.display='none';sun.style.display='none';pal.classList.remove('show');vsp.classList.remove('show');if(threeAnimId){cancelAnimationFrame(threeAnimId);threeAnimId=null}roomSyncOnShow()}})});
+document.querySelectorAll('#viewToggle .toggle-btn').forEach(b=>{b.addEventListener('click',function(){document.querySelectorAll('#viewToggle .toggle-btn').forEach(x=>x.classList.remove('active'));this.classList.add('active');STATE.view=this.dataset.view;const svg=document.getElementById('map'),cv=document.getElementById('threeCanvas'),sun=document.getElementById('sunSection'),pal=document.getElementById('objectPalette'),vsp=document.getElementById('villaStylePicker');if(STATE.view==='3d'){svg.style.display='none';cv.style.display='block';sun.style.display='';pal.classList.add('show');vsp.classList.add('show');document.getElementById('roomEditBar').classList.remove('show');document.getElementById('roomHint').classList.remove('show');document.getElementById('roomBtn').classList.remove('active');if(!threeInited)initThreeScene(cv);buildVillas3D();updateSun3D();animateThree()}else{svg.style.display='';cv.style.display='none';sun.style.display='none';pal.classList.remove('show');vsp.classList.remove('show');if(threeAnimId){cancelAnimationFrame(threeAnimId);threeAnimId=null}roomSyncOnShow()}updateAreaTable()})});
 
 function solarPosition(lat,lon,month,hour){const doy=[15,46,74,105,135,166,196,227,258,288,319,349][month],decl=23.45*Math.sin((360/365)*(284+doy)*Math.PI/180)*Math.PI/180,latR=lat*Math.PI/180,solarNoon=12-(lon-30)/15,ha=(hour-solarNoon)*15*Math.PI/180,sinE=Math.sin(latR)*Math.sin(decl)+Math.cos(latR)*Math.cos(decl)*Math.cos(ha),el=Math.asin(Math.max(-1,Math.min(1,sinE))),cosAz=(Math.sin(decl)-Math.sin(latR)*sinE)/(Math.cos(latR)*Math.cos(el)+1e-9);let az=Math.acos(Math.max(-1,Math.min(1,cosAz)));if(ha>0)az=2*Math.PI-az;return{elevation:el,azimuth:az}}
 function sunDirection(m,h){const{elevation:el,azimuth:az}=solarPosition(LAT,LON,m,h);if(el<0)return null;const d=80;return{x:d*Math.cos(el)*Math.sin(az),y:d*Math.sin(el),z:-d*Math.cos(el)*Math.cos(az),elevation:el,azimuth:az}}
@@ -2574,6 +2703,7 @@ var villaStairMeta={}; // key -> stair hole rect (4 world-2D corners) or null
 var villaOpenMeta={};  // key -> {f1:[{x1,y1,x2,y2,type}], f2:[...]} exterior door/window segments (world-2D)
 var villaF2Poly={};    // key -> the F2 footprint polygon (world-2D, includes çıkma/cantilever overhang)
 var villaAutoWin={};   // key -> {f1:[{edge,t,width,sillY,height}], f2:[...]} the auto exterior windows (editor's starting point)
+var villaWingWin={};   // Plan E: extId ('A|B') -> [{edge(wing quad edge),t,width,height,sillY,type}] routed from the union plan
 var villaStairInfo={}; // key -> {edge,center,flip, sx,sy,fdx,fdy,pdx,pdy,L,w} resolved stair placement (for ODA move + entry arrow)
 // Capture exterior openings as world-2D segments from an edge list + per-edge opening arrays.
 function captureOpenings(edgesArr, openByEdge){
@@ -3282,7 +3412,41 @@ function buildExtension(ext, group, F1, wallMat){
   var ops=[]; for(var oi=0;oi<n;oi++) ops[oi]=[];
   ops[0]=[{t:0.5,width:edges[0].len,height:F1,sillY:0,type:'door'}];
   if(!ext.divider) ops[2]=[{t:0.5,width:edges[2].len,height:F1,sillY:0,type:'door'}];
+  // Editable windows/doors on the wing's exterior end walls (edges 1 & 3), placed via the ODA plan and
+  // routed here through villaWingWin. Edges 0 (villa side) and 2 (party/open seam) are never built over.
+  var wWin=villaWingWin[ext.key+'|'+ext.neighbor]||[], wDoorH=Math.min(2.2,F1-0.3);
+  wWin.forEach(function(w){ var k=w.edge; if(k==null||k===0||k===2||!ops[k])return;
+    if(w.type==='door') ops[k].push({t:w.t,width:w.width,height:wDoorH,sillY:0,type:'door'});
+    else ops[k].push({t:w.t,width:w.width,height:(w.height||1.4),sillY:(w.sillY!=null?w.sillY:0.9),type:'window'}); });
   buildWallPanels(quad, edges, SUB_H, F1, ops, matW, grp, 0.18, 0, 'planEext');
+  // Wing openings → real meshes: doors get the SAME brown hinged door (+ collider) the villa uses, windows
+  // get a glass pane + mullion. (buildWallPanels only cuts the hole; without this a door is just an opening.)
+  var _dst=VILLA_STYLES[(STATE.villaStyles&&STATE.villaStyles[ext.key]&&STATE.villaStyles[ext.key].f1)||STATE.villaStyleF1]||VILLA_STYLES.modern;
+  var matDoorE=new THREE.MeshStandardMaterial({color:_dst.door,roughness:0.55});
+  var matGlassE=makeGlassMaterial(false), matMullE=new THREE.MeshStandardMaterial({color:0x6B6B6B,roughness:0.6,metalness:0.2});
+  wWin.forEach(function(w){ var e=edges[w.edge]; if(!e||w.edge===0||w.edge===2)return;
+    if(w.type==='door'){
+      var dh=wDoorH, hingeT=w.t-(w.width*0.5)/e.len, dHX=e.ax+hingeT*e.dx, dHY=e.ay+hingeT*e.dy;
+      var baseRot=Math.atan2(e.uy,e.ux), swingSign=(((-e.uy)*(-e.nx)+(e.ux)*(-e.ny))<0)?-1:1;
+      var piv=buildHingedDoor(dHX, SUB_H+dh/2, -dHY, w.width, dh, baseRot, swingSign, matDoorE, grp);
+      var eX=e.ax+(hingeT+w.width/e.len)*e.dx, eY=e.ay+(hingeT+w.width/e.len)*e.dy;
+      var col={ax:dHX,az:-dHY,bx:eX,bz:-eY,active:true,floor:'planEext',yLow:SUB_H,yHigh:SUB_H+dh,isDoor:true};
+      wallColliders.push(col); piv.userData.collider=col;
+      // Entrance steps down the subasman plinth in front of the door — same as the villa's own entrances.
+      // (Wing group is NOT lifted, so step centres are at absolute y=sh/2; nx is the wall's outward normal.)
+      var sN=5, sRise=SUB_H/sN, sTread=0.30, sW=Math.min(2.0,e.len), dCx=e.ax+w.t*e.dx, dCy=e.ay+w.t*e.dy;
+      stairZones.push({cx:dCx+sN*sTread*e.nx, cz:-(dCy+sN*sTread*e.ny), dirX:-e.nx, dirZ:e.ny, runLen:sN*sTread, width:sW, baseY:0, topY:SUB_H, floor:'entrance'});
+      for(var si=0;si<sN;si++){ var sh=(si+1)*sRise, od=(sN-si-0.5)*sTread, stX=dCx+od*e.nx, stY=dCy+od*e.ny;
+        var sm=new THREE.Mesh(new THREE.BoxGeometry(sW,sh,sTread),matSlab);
+        sm.position.set(stX,sh/2,-stY); sm.rotation.y=e.angle; sm.castShadow=true; sm.receiveShadow=true; grp.add(sm); }
+      return;
+    }
+    var hh=(w.height||1.4), sill=(w.sillY!=null?w.sillY:0.9), faceAngle=Math.atan2(e.nx,-e.ny), center=SUB_H+sill+hh/2;
+    var gx=e.ax+w.t*e.dx, gz=e.ay+w.t*e.dy;
+    var glass=new THREE.Mesh(new THREE.PlaneGeometry(w.width,hh),matGlassE);
+    glass.position.set(gx,center,-gz); glass.rotation.y=faceAngle; grp.add(glass);
+    var mull=new THREE.Mesh(new THREE.PlaneGeometry(0.05,hh),matMullE);
+    mull.position.set(gx+e.nx*0.01,center,-(gz+e.ny*0.01)); mull.rotation.y=faceAngle; grp.add(mull); });
   slab(SUB_H+F1,ROOF,matSlab);    // flat roof at the F1 ceiling height (single storey — F2 does not cover it)
   scatterRoofGrass(quad, SUB_H+F1+ROOF, grp);  // green-roof the connector wing so its top isn't a bare dry slab
   group.add(grp);
@@ -3618,6 +3782,14 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       peWings.push({bi:bi, t0:t0, t1:t1}); peSharedEdges[bi]=true;
     });
   }
+  // Plan D: the wall facing the attached garage stays a plain SOLID wall by default — no auto window and
+  // no auto door. The user cuts the connecting door here themselves via the ODA plan. (The garage's own
+  // villa-side wall is left open in buildGarage, so a user-placed door leads straight into the garage.)
+  if(STATE.planD && STATE.pGarageDoor && villaKey && STATE.pGarageDoor[villaKey]){
+    var _gd=STATE.pGarageDoor[villaKey], _gbi=-1,_gbd=1e9;
+    for(var _gi=0;_gi<n;_gi++){var _ge=edges[_gi]; var _t=Math.max(0,Math.min(1,((_gd[0]-_ge.ax)*_ge.ux+(_gd[1]-_ge.ay)*_ge.uy)/_ge.len)); var _px=_ge.ax+_t*_ge.len*_ge.ux,_py=_ge.ay+_t*_ge.len*_ge.uy,_d=Math.hypot(_px-_gd[0],_py-_gd[1]); if(_d<_gbd){_gbd=_d;_gbi=_gi;}}
+    if(_gbi>=0) peSharedEdges[_gbi]=true;   // skip auto window/door on the garage-facing wall
+  }
   var openingsF1=[];
   for(var foi=0;foi<n;foi++){
     openingsF1[foi]=[];
@@ -3632,14 +3804,22 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       autoWin1.push({edge:foi, t:0.5, width:fe.len*0.55, height:g1H2, sillY:g1SillY});
     }
   }
-  var win1=edited1?ux1:autoWin1;
-  win1.forEach(function(w){ if(openingsF1[w.edge]) openingsF1[w.edge].push(w.type==='door'?{t:w.t,width:w.width,height:doorH3,sillY:0,type:'door'}:{t:w.t, width:w.width, height:(w.height||g1H2), sillY:(w.sillY!=null?w.sillY:g1SillY), type:'window'}); });
-  // Plan D: cut a walkable door from the house into its attached garage (on the gap-facing F1 wall).
-  if(STATE.planD && STATE.pGarageDoor && villaKey && STATE.pGarageDoor[villaKey]){
-    var _gd=STATE.pGarageDoor[villaKey], _bi=-1,_bd=1e9,_bt=0.5;
-    for(var _gi=0;_gi<n;_gi++){var _ge=edges[_gi]; var _t=((_gd[0]-_ge.ax)*_ge.ux+(_gd[1]-_ge.ay)*_ge.uy)/_ge.len; _t=Math.max(0,Math.min(1,_t)); var _px=_ge.ax+_t*_ge.len*_ge.ux,_py=_ge.ay+_t*_ge.len*_ge.uy,_d=Math.hypot(_px-_gd[0],_py-_gd[1]); if(_d<_bd){_bd=_d;_bi=_gi;_bt=_t;}}
-    if(_bi>=0 && openingsF1[_bi]){ var _hw=(0.9/2)/edges[_bi].len; openingsF1[_bi].push({t:Math.max(_hw,Math.min(1-_hw,_bt)), width:0.9, height:doorH3, sillY:0, type:'door'}); }
+  // Plan E: the F1 plan is edited as the villa+wing UNION (one continuous outline). The active union window
+  // list (edited or auto) is routed onto the convex sub-shapes: rect edges feed the villa facade below
+  // exactly as normal, while wing-edge windows are stashed in villaWingWin for buildExtension to render.
+  var autoWinF1=autoWin1, win1;
+  var _peU=(STATE.planE && STATE.pE && STATE.pE.unions && villaKey && STATE.pE.unions[villaKey] && STATE.pE.unions[villaKey].edgeMap);
+  if(_peU){
+    var _uP=STATE.pE.unions[villaKey], _frontU=unionEdgeAt(_uP, poly2D[longIdx]);
+    autoWinF1=unionAutoWin(_uP, _frontU, doorT, bigT, smallT, g1H2, g1SillY);
+    var _routed=routeUnionWindows(edited1?ux1:autoWinF1, _uP);
+    win1=_routed.rect;
+    for(var _wid in _routed.wings){ villaWingWin[_wid]=_routed.wings[_wid]; }
+  }else{
+    win1=edited1?ux1:autoWin1;
   }
+  win1.forEach(function(w){ if(openingsF1[w.edge]) openingsF1[w.edge].push(w.type==='door'?{t:w.t,width:w.width,height:doorH3,sillY:0,type:'door'}:{t:w.t, width:w.width, height:(w.height||g1H2), sillY:(w.sillY!=null?w.sillY:g1SillY), type:'window'}); });
+  // (Plan D garage door is no longer auto-cut — the garage-facing wall is solid by default; see above.)
   // Plan E: fully open the F1 wall over each wing's q0→q1 span so the wing reads as one room with the villa.
   peWings.forEach(function(pw){
     if(!openingsF1[pw.bi]) return;
@@ -3674,7 +3854,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     win3=edited3?ux3:autoWin3;
     win3.forEach(function(w){ if(openingsF3[w.edge]) openingsF3[w.edge].push(w.type==='door'?{t:w.t,width:w.width,height:doorGlassH,sillY:0,type:'door'}:{t:w.t, width:w.width, height:(w.height||g2H2), sillY:(w.sillY!=null?w.sillY:g2SillY), type:'window'}); });
   }
-  if(villaKey){ villaAutoWin[villaKey]={f1:autoWin1, f2:autoWin2, f3:autoWin3}; }
+  if(villaKey){ villaAutoWin[villaKey]={f1:autoWinF1, f2:autoWin2, f3:autoWin3}; }
 
   // === Build hollow walls with actual openings ===
   buildWallPanels(poly2D, edges, 0, F1, openingsF1, matConcrete, g, 0.22, SUB_H, 'F1');
@@ -4800,7 +4980,7 @@ function buildVillas3D(){
   villaEntries.length=0;
   stairZones.length=0;
   villaFootprints.length=0;
-  villaStairMeta={};villaOpenMeta={};villaF2Poly={};villaAutoWin={};villaStairInfo={};
+  villaStairMeta={};villaOpenMeta={};villaF2Poly={};villaAutoWin={};villaStairInfo={};villaWingWin={};
   windowPanes.length=0;
   const h=STATE.floorCount*FLOOR_H;
   if(STATE.mode==='free'){
