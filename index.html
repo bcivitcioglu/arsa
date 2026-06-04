@@ -548,6 +548,8 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         </select>
       </div>
       <div class="sun-info" id="sunInfo"></div>
+      <label class="sun-row" style="cursor:pointer;margin-top:6px"><span>Panel güneş takibi</span>
+        <input type="checkbox" id="solarTrackChk"></label>
     </div>
 
     <!-- Options -->
@@ -779,6 +781,33 @@ const STATE={
 // ═══════════════════════════════════════
 const PARCEL_AREA=1218,VILLA_COUNT=3,VILLA_AREA=72,DIV_SETBACK=3;
 const LAT=36.995,LON=30.945,FLOOR_H=3;
+// Optimum FIXED panel tilt for this latitude — found by maximising the clear-sky energy that lands on a
+// south-facing surface over the whole year. For each candidate tilt β we integrate, over every day and
+// daylight hour, the beam irradiance (Meinel clear-sky transmittance vs. air mass) times the cosine of the
+// incidence angle on the tilted plane (cosθ = sin δ·sin(φ−β) + cos δ·cos(φ−β)·cos h for a due-south plane).
+// The β with the largest annual sum is the optimum. For φ≈37°N this lands around the low-30s°, matching
+// published values for Antalya — i.e. a real calculation from the land's coordinates, not a rule of thumb.
+function solarOptimumTilt(latDeg){
+  var phi=latDeg*Math.PI/180, best=0, bestE=-1;
+  for(var bDeg=0;bDeg<=60;bDeg++){
+    var beta=bDeg*Math.PI/180, sum=0;
+    for(var doy=1;doy<=365;doy+=3){
+      var decl=23.45*Math.sin(2*Math.PI*(284+doy)/365)*Math.PI/180;
+      for(var hd=-90;hd<=90;hd+=5){
+        var ha=hd*Math.PI/180;
+        var sinEl=Math.sin(phi)*Math.sin(decl)+Math.cos(phi)*Math.cos(decl)*Math.cos(ha);
+        if(sinEl<=0.02) continue;                                   // sun below horizon
+        var cosInc=Math.sin(decl)*Math.sin(phi-beta)+Math.cos(decl)*Math.cos(phi-beta)*Math.cos(ha);
+        if(cosInc<=0) continue;                                     // sun behind the panel
+        var AM=1/sinEl, Ibeam=Math.pow(0.7, Math.pow(AM,0.678));    // Meinel clear-sky beam transmittance
+        sum+=Ibeam*cosInc;
+      }
+    }
+    if(sum>bestE){bestE=sum;best=bDeg;}
+  }
+  return best;
+}
+const SOLAR_OPT_TILT_DEG=solarOptimumTilt(LAT);   // computed once for this parcel
 const pad=65,svgW=600,svgH=600,sc=10.24;
 function S(x,y){return[pad+x*sc,svgH-pad-y*sc]}
 function M(sx,sy){return[(sx-pad)/sc,(svgH-pad-sy)/sc]}
@@ -2453,44 +2482,75 @@ function buildSolarModule(){
   g.userData.dims=[totW,totL];
   return g;
 }
-// Lay tilted PV rows over a flat roof polygon (green-roof biosolar). Rows run along the roof's long
-// OBB axis; modules tilt about that axis. Footprint-culled to the polygon, kept off avoidPoly (stair).
-// poly2D + roofTopY are in the LOCAL builder frame (villa group lifted by SUB_H later).
+// Lay tilted PV rows over a flat roof. The panels are oriented for the LAND'S COORDINATES, not the
+// building: rows run East–West and tilt to face TRUE SOUTH (+Z) at SOLAR_OPT_TILT_DEG (the annual optimum
+// for this latitude), stacked North→South with an anti-shading gap. World axes: +X=East, +Z=South
+// (see sunDirection). Footprint-culled to the polygon, kept off avoidPolys (stair / open notches). Each
+// panel is registered in solarPanels[] so it can later track the live sun. group is the villa group
+// (lifted by SUB_H), so XZ are world and roofTopY is local.
 function scatterRoofSolar(poly2D, roofTopY, group, avoidPolys){
   if(!poly2D || poly2D.length<3) return;
-  var f=villaOBB(poly2D);
   function inPoly(poly,x,y){var ins=false,M=poly.length;for(var p=0,q=M-1;p<M;q=p++){var xi=poly[p][0],yi=poly[p][1],xj=poly[q][0],yj=poly[q][1];if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))ins=!ins;}return ins;}
-  var uMin=1e9,uMax=-1e9,vMin=1e9,vMax=-1e9;
-  for(var i=0;i<poly2D.length;i++){var lc=worldToLocal2D(f,poly2D[i][0],poly2D[i][1]); uMin=Math.min(uMin,lc[0]);uMax=Math.max(uMax,lc[0]);vMin=Math.min(vMin,lc[1]);vMax=Math.max(vMax,lc[1]);}
+  // bbox in world XZ (poly2D is [x, y2D]; world Z = −y2D)
+  var minX=1e9,maxX=-1e9,minZ=1e9,maxZ=-1e9;
+  for(var i=0;i<poly2D.length;i++){var x=poly2D[i][0], z=-poly2D[i][1]; if(x<minX)minX=x; if(x>maxX)maxX=x; if(z<minZ)minZ=z; if(z>maxZ)maxZ=z;}
   var tmpl=buildSolarModule(), dims=tmpl.userData.dims, pw=dims[0], pl=dims[1];
-  var tilt=20*Math.PI/180, sinT=Math.sin(tilt), cosT=Math.cos(tilt);
-  var projDepth=pl*cosT, standH=(pl/2)*sinT+0.18, inset=0.9, gapU=0.06, rowPitch=projDepth+0.75;
-  // world basis (world Z = −y2D); yaw aligns module local +X to the roof long axis
-  var Ux=f.dirX, Uz=-f.dirY, yaw=Math.atan2(-Uz,Ux);
+  var tilt=SOLAR_OPT_TILT_DEG*Math.PI/180, sinT=Math.sin(tilt), cosT=Math.cos(tilt);
+  var projDepth=pl*cosT, standH=(pl/2)*sinT+0.18, inset=0.9, gapX=0.06, rowPitch=projDepth+0.75;
   var a=solarGetAssets();
-  function placeAt(u,v){
-    // require the module's ground footprint corners to be on the roof and clear of avoidPoly
-    for(var su=-1;su<=1;su+=2) for(var sv=-1;sv<=1;sv+=2){
-      var w2=localToWorld2D(f,u+su*pw*0.5,v+sv*projDepth*0.5);
-      if(!inPoly(poly2D,w2[0],w2[1])) return;
-      if(avoidPolys){for(var ai=0;ai<avoidPolys.length;ai++){if(inPoly(avoidPolys[ai],w2[0],w2[1])) return;}}
+  function place(wx,wz){
+    // module footprint: pw across X (E–W), projDepth across Z (N–S). All corners must be on the roof & clear.
+    for(var sx=-1;sx<=1;sx+=2) for(var sz=-1;sz<=1;sz+=2){
+      var p2x=wx+sx*pw*0.5, p2y=-(wz+sz*projDepth*0.5);
+      if(!inPoly(poly2D,p2x,p2y)) return;
+      if(avoidPolys){for(var ai=0;ai<avoidPolys.length;ai++){if(inPoly(avoidPolys[ai],p2x,p2y)) return;}}
     }
-    var c2=localToWorld2D(f,u,v), wx=c2[0], wz=-c2[1];
-    var holder=new THREE.Group(); holder.position.set(wx, roofTopY+standH, wz); holder.rotation.y=yaw;
-    var tg=new THREE.Group(); tg.rotation.x=-tilt; holder.add(tg);
-    tg.add(tmpl.clone(true));
-    // two support pedestals (front low, back high) along the tilt axis
-    for(var sv2=-1;sv2<=1;sv2+=2){
-      var edge=localToWorld2D(f,u,v+sv2*projDepth*0.5);
-      var edgeY=roofTopY+standH+sv2*(pl/2)*sinT, hgt=Math.max(0.06,edgeY-roofTopY);
+    var holder=new THREE.Group(); holder.position.set(wx, roofTopY+standH, wz);   // south-facing → no yaw
+    var tg=new THREE.Group(); tg.rotation.x=tilt; holder.add(tg);                  // +tilt tips the +Z (south) edge down
+    tg.add(tmpl.clone(true)); group.add(holder);
+    // support pedestals: south edge (z+) low, north edge (z−) high
+    for(var sz2=-1;sz2<=1;sz2+=2){
+      var ez=wz+sz2*projDepth*0.5, edgeY=roofTopY+standH - sz2*(pl/2)*sinT, hgt=Math.max(0.06,edgeY-roofTopY);
       var ped=new THREE.Mesh(new THREE.BoxGeometry(pw*0.8,hgt,0.05),a.leg);
-      ped.position.set(edge[0], roofTopY+hgt/2, -edge[1]); ped.rotation.y=yaw; ped.castShadow=true; group.add(ped);
+      ped.position.set(wx, roofTopY+hgt/2, ez); ped.castShadow=true; group.add(ped);
     }
-    group.add(holder);
+    solarPanels.push({holder:holder, tg:tg, tilt:tilt});   // registered for live sun-tracking
   }
-  for(var v=vMin+inset+projDepth/2; v<=vMax-inset-projDepth/2; v+=rowPitch)
-    for(var u=uMin+inset+pw/2; u<=uMax-inset-pw/2; u+=pw+gapU)
-      placeAt(u,v);
+  for(var wz=minZ+inset+projDepth/2; wz<=maxZ-inset-projDepth/2; wz+=rowPitch)
+    for(var wx=minX+inset+pw/2; wx<=maxX-inset-pw/2; wx+=pw+gapX)
+      place(wx,wz);
+}
+// Lay solar modules FLAT and flush over a horizontal rectangular cap (e.g. the rooftop stair-house roof —
+// the highest slab of the structure). Same embedded style as the veranda shade: no tilt, no pedestals — the
+// modules tile the cap surface, aligned to its edges, lifted just above the slab. poly2D is the cap polygon
+// in world-2D ([x, y2D]; world Z = −y2D); topY is the slab's top in the LOCAL builder frame.
+function embedFlatSolar(poly2D, topY, group){
+  if(!poly2D || poly2D.length<4) return;
+  function inPoly(poly,x,y){var ins=false,M=poly.length;for(var p=0,q=M-1;p<M;q=p++){var xi=poly[p][0],yi=poly[p][1],xj=poly[q][0],yj=poly[q][1];if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))ins=!ins;}return ins;}
+  // Oriented box from the cap's first two edges (the stair cap is a rectangle).
+  var c0=poly2D[0], c1=poly2D[1], c2=poly2D[2];
+  var aX=c1[0]-c0[0], aY=c1[1]-c0[1], la=Math.hypot(aX,aY)||1; var uax=aX/la, uay=aY/la;   // edge A unit dir (2D)
+  var bX=c2[0]-c1[0], bY=c2[1]-c1[1], lb=Math.hypot(bX,bY)||1; var ubx=bX/lb, uby=bY/lb;   // edge B unit dir (2D)
+  var cx=0,cy=0; for(var i=0;i<poly2D.length;i++){cx+=poly2D[i][0];cy+=poly2D[i][1];} cx/=poly2D.length; cy/=poly2D.length;
+  var tmpl=buildSolarModule(), dims=tmpl.userData.dims, pw=dims[0], pl=dims[1];
+  var margin=0.10, gap=0.03;
+  function fit(axisLen,modLen){return Math.max(0,Math.floor((axisLen-2*margin+gap)/(modLen+gap)));}
+  // Pick the panel orientation (module +X along A, or rotated 90°) that fits more modules on this cap.
+  var rot=(fit(la,pl)*fit(lb,pw))>(fit(la,pw)*fit(lb,pl));
+  var dimA=rot?pl:pw, dimB=rot?pw:pl;
+  var nA=fit(la,dimA), nB=fit(lb,dimB);
+  if(nA<1||nB<1) return;
+  var base=Math.atan2(uay,uax), yaw=rot?base+Math.PI/2:base;   // module local +X → edge A (world Z = −y2D)
+  var gridA=nA*dimA+(nA-1)*gap, gridB=nB*dimB+(nB-1)*gap;
+  for(var ia=0;ia<nA;ia++) for(var ib=0;ib<nB;ib++){
+    var da=-gridA/2+dimA/2+ia*(dimA+gap), db=-gridB/2+dimB/2+ib*(dimB+gap);
+    var wx2=cx+da*uax+db*ubx, wy2=cy+da*uay+db*uby;     // world-2D centre of this module
+    if(!inPoly(poly2D,wx2,wy2)) continue;
+    var mod=tmpl.clone(true);
+    mod.position.set(wx2, topY+0.02, -wy2);             // flush, tiny air gap above the slab
+    mod.rotation.y=yaw;
+    group.add(mod);
+  }
 }
 function resizeThreeRenderer(){if(!threeRenderer)return;const vp=document.getElementById('viewport');const w=vp.clientWidth,h=vp.clientHeight;threeRenderer.setSize(w,h);if(threeCamera){threeCamera.aspect=w/h;threeCamera.updateProjectionMatrix()}}
 window.addEventListener('resize',()=>{if(threeInited&&STATE.view==='3d')resizeThreeRenderer()});
@@ -2508,6 +2568,7 @@ var villaEntries=[];
 var stairZones=[]; // {cx, cz, dirX, dirZ, runLen, width, baseY, topY, floor} in world coords
 var villaFootprints=[]; // {poly: [[wx, wz],...], floorYs: [groundY, F2Y, roofY]}
 var villaBuildSerial=0;  // bumped each buildVillas3D — async roof-plant scatters check it so stale rebuilds drop
+var solarPanels=[];      // {holder, tg, tilt} per roof PV panel — re-aimed by updateSolarTracking()
 // Captured during the 3D build (keyed by villa key) so the 2D ODA editor can show real positions:
 var villaStairMeta={}; // key -> stair hole rect (4 world-2D corners) or null
 var villaOpenMeta={};  // key -> {f1:[{x1,y1,x2,y2,type}], f2:[...]} exterior door/window segments (world-2D)
@@ -3994,6 +4055,9 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
         else            lWall(a[0],a[1],b[0],b[1],twBottom,twH,0.15,'stairtower');// tower: solid elsewhere
       }
       mvPolySlab(Lpoly, twBottom+twH, 0.18, matConcrete);   // tower roof cap
+      // Embedded PV on the stair-house cap — the highest roof of the whole structure. Flush flat modules,
+      // same embedded style as the veranda shade (no tilt/pedestals).
+      if(STATE.roofSolar) embedFlatSolar(Lpoly, twBottom+twH+0.18, g);
       return;
     }
 
@@ -4114,6 +4178,9 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       else      { addTowerDoorWall(c[1][0],c[1][1],twMx,twMy); addTowerWall(twMx,twMy,c[2][0],c[2][1]); }   // exit half c1→M
       // Roof cap over the tower (covers the stair opening from above)
       mvPolySlab(c, twBottom+twH, 0.18, matConcrete);
+      // Embedded PV on the stair-house cap — the highest roof of the whole structure. Flush flat modules,
+      // same embedded style as the veranda shade (no tilt/pedestals).
+      if(STATE.roofSolar) embedFlatSolar(c, twBottom+twH+0.18, g);
     }
   })();
 
@@ -4308,6 +4375,32 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       vRaf.rotation.y=vEdgeAngle;
       vRaf.rotation.x=vSlope;
       g.add(vRaf);
+    }
+    // Embedded PV: lay the real solar modules (same buildSolarModule used on the green roofs) flush on
+    // the veranda's rafters, sharing the roof's exact slope + yaw — the shade itself becomes a solar awning.
+    // A holder Group inherits the roof box's transform, so modules tiled in its local XZ plane sit parallel
+    // to (and tilt with) the plank; we just lift them in local +Y to clear the plank + 12cm rafters.
+    if(STATE.roofSolar){
+      var vSolTmpl=buildSolarModule(), vSolDims=vSolTmpl.userData.dims, spw=vSolDims[0], spl=vSolDims[1];
+      var vSolHolder=new THREE.Group();
+      vSolHolder.position.set(vRoofCx,vRoofY,-vRoofCy);
+      vSolHolder.rotation.order='YXZ';
+      vSolHolder.rotation.y=vEdgeAngle;
+      vSolHolder.rotation.x=vSlope;
+      var vSolYoff=VER_THICK/2+0.12+0.006;            // above plank + rafter height, tiny air gap
+      var vSolGap=0.03, vSolMx=0.12, vSolMz=0.18;     // inter-panel gap + edge margins (width/depth)
+      var vUsableW=VER_W-2*vSolMx, vUsableD=VER_DEPTH-2*vSolMz;
+      var vSolCols=Math.max(1,Math.floor((vUsableW+vSolGap)/(spw+vSolGap)));   // along width (module local +X)
+      var vSolRows=Math.max(1,Math.floor((vUsableD+vSolGap)/(spl+vSolGap)));   // along depth (module local +Z)
+      var vGridW=vSolCols*spw+(vSolCols-1)*vSolGap, vGridD=vSolRows*spl+(vSolRows-1)*vSolGap;
+      for(var sc=0;sc<vSolCols;sc++) for(var sr=0;sr<vSolRows;sr++){
+        var slx=-vGridW/2+spw/2+sc*(spw+vSolGap);
+        var slz=-vGridD/2+spl/2+sr*(spl+vSolGap);
+        var vMod=vSolTmpl.clone(true);
+        vMod.position.set(slx,vSolYoff,slz);
+        vSolHolder.add(vMod);
+      }
+      g.add(vSolHolder);
     }
     // 2 wooden support columns at far end corners — extend down to ground (past subasman)
     var SUBASMAN_H=0.8;
@@ -4699,6 +4792,7 @@ function addLotOverlay3D(poly,color){
 function buildVillas3D(){
   if(!villaGroup)return;while(villaGroup.children.length)villaGroup.remove(villaGroup.children[0]);
   villaBuildSerial++;   // invalidate any in-flight async roof-plant scatters from the previous build
+  solarPanels.length=0; // panels are rebuilt below; drop the old tracking registry
   // Reset FP collider/door/entry data each rebuild
   wallColliders.length=0;
   doorPivots.length=0;
@@ -4741,11 +4835,28 @@ function buildVillas3D(){
     }
     for(let i=0;i<3;i++){const l=STATE.pParcels[i];if(l&&l.length>=3)addLotOverlay3D(l,VILLA_COLORS[i])}
   }
+  if(typeof updateSolarTracking==='function') updateSolarTracking();   // aim freshly-built panels (fixed optimum or live tracking)
 }
 
-function updateSun3D(){const h=parseFloat(document.getElementById('timeSlider').value),m=parseInt(document.getElementById('monthSelect').value),hh=Math.floor(h),mm=Math.round((h-hh)*60);document.getElementById('timeDisplay').textContent=String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0');const sun=sunDirection(m,h);if(sun&&threeSunLight){threeSunLight.position.set(threeSunLight.target.position.x+sun.x,sun.y,threeSunLight.target.position.z+sun.z);threeSunLight.intensity=Math.max(.3,Math.sin(sun.elevation)*1.5);document.getElementById('sunInfo').textContent='Yukseklik '+(sun.elevation*180/Math.PI).toFixed(1)+'° · Azimut '+(sun.azimuth*180/Math.PI).toFixed(0)+'°'}else if(threeSunLight){threeSunLight.intensity=0;document.getElementById('sunInfo').textContent='Gunes batmis'}}
+// Re-aim every roof PV panel. Tracking ON → dual-axis "face the live sun" (computed from the parcel's
+// LAT/LON + the current month & hour); OFF → parked at the annual-optimum south-facing tilt.
+function updateSolarTracking(){
+  if(!solarPanels.length) return;
+  var m=parseInt(document.getElementById('monthSelect').value), h=parseFloat(document.getElementById('timeSlider').value);
+  var s=sunDirection(m,h);
+  for(var i=0;i<solarPanels.length;i++){var p=solarPanels[i];
+    if(STATE.solarTrack && s && s.elevation>0.03){ p.holder.rotation.y=Math.atan2(s.x,s.z); p.tg.rotation.x=Math.PI/2 - s.elevation; }
+    else { p.holder.rotation.y=0; p.tg.rotation.x=p.tilt; }
+  }
+}
+function updateSun3D(){const h=parseFloat(document.getElementById('timeSlider').value),m=parseInt(document.getElementById('monthSelect').value),hh=Math.floor(h),mm=Math.round((h-hh)*60);document.getElementById('timeDisplay').textContent=String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0');const sun=sunDirection(m,h);
+  var panelTxt = STATE.solarTrack ? ' · Panel: güneş takibi' : (' · Panel: '+SOLAR_OPT_TILT_DEG+'° güney (optimum)');
+  if(sun&&threeSunLight){threeSunLight.position.set(threeSunLight.target.position.x+sun.x,sun.y,threeSunLight.target.position.z+sun.z);threeSunLight.intensity=Math.max(.3,Math.sin(sun.elevation)*1.5);document.getElementById('sunInfo').textContent='Yukseklik '+(sun.elevation*180/Math.PI).toFixed(1)+'° · Azimut '+(sun.azimuth*180/Math.PI).toFixed(0)+'°'+panelTxt}else if(threeSunLight){threeSunLight.intensity=0;document.getElementById('sunInfo').textContent='Gunes batmis'+panelTxt}
+  updateSolarTracking();
+}
 document.getElementById('timeSlider').addEventListener('input',updateSun3D);
 document.getElementById('monthSelect').addEventListener('change',updateSun3D);
+document.getElementById('solarTrackChk').addEventListener('change',function(){STATE.solarTrack=this.checked;updateSun3D();});
 
 // 3D object placement
 let placementMode=null,selectedObj3D=null,isDragging3D=false,eraserMode=false;
@@ -6036,6 +6147,7 @@ STATE.villaStyleF2='woodwide';  // Kaba Ahsap
 STATE.villaStyleRoof='beton';
 STATE.roofGreen=true;   // green roof on the villa terrace: real blade grass + a few çalı (EZ-tree bushes)
 STATE.roofSolar=true;   // tilted PV rows on the green roof (biosolar)
+STATE.solarTrack=false; // false → panels parked at the annual-optimum south tilt; true → track the live sun
 STATE.tileAlignment='world'; // 'villa' = aligned with building walls; 'world' = world-axis (angled)
 STATE.fenceWallStyle='koyu'; // outer land boundary fence wall color (GLOBAL — land boundary, not per villa)
 // Per-villa exterior styles (Tasarım): each villa can differ. Seeded from the global defaults above.

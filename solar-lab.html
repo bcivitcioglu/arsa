@@ -55,14 +55,20 @@ var _ce=console.error.bind(console);console.error=function(){showErr('console.er
   <div class="grp">
     <div class="ttl">Yerleşim</div>
     <div id="arr"><button data-arr="1">Tek modül</button><button data-arr="2x2">2×2</button><button data-arr="3x4">3×4 dizi</button></div>
-    <label>Eğim (tilt): <span class="val" id="vTl">18</span>°
-      <input type="range" id="sTl" min="0" max="45" step="1" value="18"></label>
-    <button id="bMount" class="on">Montaj rayı</button>
+  </div>
+  <div class="grp">
+    <div class="ttl">Taşıyıcı yapı (tek eksenli izleyici)</div>
+    <label>Yapı yüksekliği: <span class="val" id="vYap">0.80</span> m
+      <input type="range" id="sYap" min="0.3" max="2.2" step="0.05" value="0.8"></label>
+    <label>Eğim (manuel): <span class="val" id="vTl">18</span>°
+      <input type="range" id="sTl" min="-60" max="60" step="1" value="18"></label>
+    <button id="bSun">☀ Güneşi takip et</button>
+    <div class="hint">Lineer aktüatör paneli tek yönde eğer. Takip açıkken eğim güneşe göre otomatik; Güneş kaydırıcısıyla izlemeyi gözle.</div>
   </div>
   <div class="grp">
     <div class="ttl">Sahne</div>
-    <label>Güneş açısı: <span class="val" id="vSun">45</span>°
-      <input type="range" id="sSun" min="10" max="85" step="1" value="45"></label>
+    <label>Güneş — gökyüzü yolu (doğu→batı): <span class="val" id="vSun">70</span>°
+      <input type="range" id="sSun" min="15" max="165" step="1" value="70"></label>
     <button id="bShadow" class="on">Gölgeler</button>
   </div>
 </div>
@@ -130,7 +136,28 @@ function skyEquirect(){
 scene.environment = pmrem.fromEquirectangular(skyEquirect()).texture;
 
 // ── State ────────────────────────────────────────────────────────────
-const ST = { cell:'mono', back:'black', frame:'silver', size:60, gloss:0.10, arr:'1', tilt:18, mount:true };
+const ST = { cell:'mono', back:'black', frame:'silver', size:60, gloss:0.10, arr:'1', tilt:18, postH:0.8, sunFollow:false };
+// Structure / actuator materials (module scope so rebuilds reuse them)
+const matSteelGal = new THREE.MeshStandardMaterial({color:0x9aa0a6, metalness:0.85, roughness:0.3});
+const matSteelDark= new THREE.MeshStandardMaterial({color:0x44474c, metalness:0.7,  roughness:0.45});
+const matActHousing=new THREE.MeshStandardMaterial({color:0x2b2e33, metalness:0.6,  roughness:0.5});
+const matActRod   = new THREE.MeshStandardMaterial({color:0xccd0d6, metalness:0.95, roughness:0.16});
+// A cylinder spanning p0→p1 (THREE cylinders are Y-aligned; reorient to the segment).
+function makeCyl(p0,p1,r,mat){
+  const dir=new THREE.Vector3().subVectors(p1,p0), len=Math.max(1e-4,dir.length());
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,12),mat);
+  m.position.copy(p0).add(p1).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+  m.castShadow=true; m.receiveShadow=true; return m;
+}
+// A linear actuator p0(fixed)→p1(driven): dark housing tube + shiny extending rod + end pivot pins.
+function actuator(p0,p1,group){
+  const dir=new THREE.Vector3().subVectors(p1,p0), len=Math.max(1e-4,dir.length()), u=dir.clone().normalize();
+  const hEnd=p0.clone().add(u.clone().multiplyScalar(len*0.6));
+  group.add(makeCyl(p0,hEnd,0.045,matActHousing));
+  group.add(makeCyl(hEnd.clone().sub(u.clone().multiplyScalar(0.03)),p1,0.022,matActRod));
+  [p0,p1].forEach(p=>{const s=new THREE.Mesh(new THREE.SphereGeometry(0.035,10,10),matActHousing);s.position.copy(p);s.castShadow=true;group.add(s);});
+}
 
 // ── Procedural cell-array texture ───────────────────────────────────
 function cellTexture(cols, rows, cellType, back){
@@ -199,41 +226,68 @@ function makeModule(){
   return g;
 }
 
-// ── Mounting rails under an array (standard roof rail look) ──────────
-function addRails(group, totW, totL, spanX){
-  const railMat=new THREE.MeshStandardMaterial({color:0x9a9ea4, metalness:0.8, roughness:0.35});
-  for(const zz of [-totL*0.28, totL*0.28]){
-    const rail=new THREE.Mesh(new THREE.BoxGeometry(spanX,0.03,0.045),railMat);
-    rail.position.set(0,-0.03,zz); rail.castShadow=true; rail.receiveShadow=true; group.add(rail);
-    for(let lx=-spanX/2+0.2; lx<=spanX/2; lx+=0.6){
-      const leg=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.10,0.03),railMat);
-      leg.position.set(lx,-0.085,zz); leg.castShadow=true; group.add(leg);
-    }
-  }
-}
-
-// ── Build the current selection (single / array), tilt + mount ──────
+// ── Single-axis tracker: posts + torque tube + pivoting panels + linear actuators ──
+// The fixed structure (posts/tube/actuator bases) lives in `rig`; the panels live in a `pivot`
+// group that rotates about the torque-tube (X) axis. Actuators are drawn between a fixed base and a
+// point on the pivot arm, so they visibly extend/retract as the tilt changes.
 let rig=null;
+function trackedTilt(postH){            // tilt (deg) that aims the panel normal at the sun, in the Y-Z plane
+  const pc=new THREE.Vector3(0,postH,0);
+  const sd=sun.position.clone().sub(pc).normalize();
+  const th=Math.atan2(-sd.z, Math.max(0.05,sd.y))*180/Math.PI;
+  return Math.max(-60,Math.min(60,th));
+}
 function build(){
   if(rig){ scene.remove(rig); rig.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material&&o.material.map)o.material.map.dispose&&o.material.map.dispose(); }); }
   rig=new THREE.Group();
   const dims = ST.arr==='1' ? [1,1] : ST.arr==='2x2' ? [2,2] : [4,3]; // [cols(X), rows(Z)]
   const sample=makeModule(); const [mW,mL]=sample.userData.size; sample.traverse(o=>{if(o.geometry)o.geometry.dispose();});
-  const gap=0.02, panels=new THREE.Group();
-  const nX=dims[0], nZ=dims[1];
+  const gap=0.02, nX=dims[0], nZ=dims[1];
+  const arrayW=nX*(mW+gap)-gap, arrayL=nZ*(mL+gap)-gap;
+  const postH=ST.postH;
+
+  const tiltDeg = ST.sunFollow ? trackedTilt(postH) : ST.tilt;
+  $('vTl').textContent = tiltDeg.toFixed(0);
+  const tiltRad = -tiltDeg*Math.PI/180;
+
+  // posts (along the tube axis X) + base plates
+  const postXs=[]; const span=arrayW-0.6;
+  const nPost=Math.max(2,Math.round(span/1.7)+1);
+  for(let i=0;i<nPost;i++) postXs.push(-span/2 + span*(nPost===1?0.5:i/(nPost-1)));
+  postXs.forEach(px=>{
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,postH,12),matSteelGal);
+    post.position.set(px,postH/2,0); post.castShadow=true; post.receiveShadow=true; rig.add(post);
+    const bp=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.04,0.22),matSteelDark); bp.position.set(px,0.02,0); bp.receiveShadow=true; rig.add(bp);
+  });
+  // torque tube along X at pivot height
+  const tube=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,arrayW+0.25,16),matSteelDark);
+  tube.rotation.z=Math.PI/2; tube.position.set(0,postH,0); tube.castShadow=true; rig.add(tube);
+
+  // pivot group (panels) — rotates about the tube
+  const pivot=new THREE.Group(); pivot.position.set(0,postH,0); pivot.rotation.x=tiltRad; rig.add(pivot);
   for(let i=0;i<nX;i++) for(let j=0;j<nZ;j++){
     const mod=makeModule();
-    mod.position.set((i-(nX-1)/2)*(mW+gap), 0, (j-(nZ-1)/2)*(mL+gap));
-    panels.add(mod);
+    mod.position.set((i-(nX-1)/2)*(mW+gap), 0, (j-(nZ-1)/2)*(mL+gap));   // local y=0 → centred on the tube
+    pivot.add(mod);
   }
-  rig.add(panels);
-  if(ST.mount) addRails(panels, mW, mL, nX*(mW+gap));
-  // tilt about X, then lift so the low edge sits near the ground
-  rig.rotation.x = -ST.tilt*Math.PI/180;
-  const lift = Math.sin(ST.tilt*Math.PI/180)*(nZ*(mL+gap))/2 + 0.18;
-  rig.position.y = lift;
+  for(const zz of [-arrayL*0.3, arrayL*0.3]){                            // cross purlins under the panels
+    const pur=new THREE.Mesh(new THREE.BoxGeometry(arrayW,0.04,0.05),matSteelDark);
+    pur.position.set(0,-0.06,zz); pur.castShadow=true; pivot.add(pur);
+  }
+
+  // linear actuator(s): fixed base on a short pedestal → driven point on the pivot arm (offset −Z from tube)
+  const armZ=Math.min(arrayL*0.34, 0.7), baseY=postH*0.30, baseZ=-0.45;
+  const actXs = nX>=2 ? [-arrayW*0.28, arrayW*0.28] : [0];
+  actXs.forEach(ax=>{
+    const ped=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.04,baseY,10),matSteelGal); ped.position.set(ax,baseY/2,baseZ); ped.castShadow=true; rig.add(ped);
+    const base=new THREE.Vector3(ax,baseY,baseZ);
+    const arm=new THREE.Vector3(ax,0,-armZ).applyAxisAngle(new THREE.Vector3(1,0,0),tiltRad).add(new THREE.Vector3(0,postH,0));
+    rig.add(makeCyl(new THREE.Vector3(ax,postH,0),arm,0.02,matSteelDark));   // arm linking tube → driven point
+    actuator(base, arm, rig);
+  });
+
   scene.add(rig);
-  controls.target.set(0, lift*0.7+0.1, 0);
+  controls.target.set(0, postH+0.35, 0);
 }
 build();
 
@@ -248,11 +302,13 @@ function act(id,attr,val){ document.querySelectorAll('#'+id+' button').forEach(b
 act('cell','cell',ST.cell); act('back','back',ST.back); act('frame','frame',ST.frame); act('size','size',ST.size); act('arr','arr',ST.arr);
 
 $('sGl').oninput=function(){ ST.gloss=+this.value; $('vGl').textContent=(+this.value).toFixed(2); build(); };
-$('sTl').oninput=function(){ ST.tilt=+this.value; $('vTl').textContent=this.value; build(); };
-$('bMount').onclick=function(){ ST.mount=!ST.mount; this.classList.toggle('on',ST.mount); build(); };
+$('sYap').oninput=function(){ ST.postH=+this.value; $('vYap').textContent=(+this.value).toFixed(2); build(); };
+$('sTl').oninput=function(){ ST.tilt=+this.value; if(!ST.sunFollow)$('vTl').textContent=this.value; if(!ST.sunFollow)build(); };
+$('bSun').onclick=function(){ ST.sunFollow=!ST.sunFollow; this.classList.toggle('on',ST.sunFollow); build(); };
 $('bShadow').onclick=function(){ renderer.shadowMap.enabled=!renderer.shadowMap.enabled; scene.traverse(o=>{if(o.material)o.material.needsUpdate=true;}); this.classList.toggle('on',renderer.shadowMap.enabled); };
-function setSun(d){ const a=d*Math.PI/180; sun.position.set(Math.cos(a)*4+1.5, Math.sin(a)*6+1.5, Math.cos(a*0.6)*3+2.5); sun.target.position.set(0,0.3,0); }
-$('sSun').oninput=function(){ $('vSun').textContent=this.value; setSun(+this.value); }; setSun(45);
+// Sun travels a sky arc east(−Z)→zenith→west(+Z); phi in degrees along that path.
+function setSun(phi){ const a=phi*Math.PI/180, R=14; sun.position.set(2.5, Math.max(0.4,Math.sin(a))*R+0.4, -Math.cos(a)*R); sun.target.position.set(0,ST.postH,0); if(ST.sunFollow) build(); }
+$('sSun').oninput=function(){ $('vSun').textContent=this.value; setSun(+this.value); }; setSun(70);
 
 // ── Render loop ──────────────────────────────────────────────────────
 function animate(){ requestAnimationFrame(animate); controls.update(); renderer.render(scene,camera); }
