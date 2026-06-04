@@ -603,6 +603,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         <button class="re-btn" data-tool="door" title="Kapı koy">&#128682; Kapı</button>
         <button class="re-btn" data-tool="window" title="Pencere (dış duvara) — ekle / kaydır / boyutlandır">&#128459; Pencere</button>
         <button class="re-btn" data-tool="stair" title="Merdiven taşı (F1 içinde) — duvara sürükle · dokun: yön çevir">&#129521; Merdiven</button>
+        <button class="re-btn" data-tool="open" id="reToolOpen" title="Açık alan / iç teras (sadece F3) — köşegen sürükle → gökyüzüne açık dikdörtgen alan" style="display:none">&#9744; Açık Alan</button>
         <button class="re-btn" data-tool="erase" title="Sil" style="color:#C62828">&#128465;</button>
       </div>
       <div class="re-group" id="reStairStyle" style="display:none">
@@ -1751,11 +1752,23 @@ function roomSyncOnShow(){
   document.querySelectorAll('#reFloor .re-btn').forEach(function(x){x.classList.toggle('active',x.dataset.floor===STATE.roomEdit.floor);});
   roomBuildVillaButtons();
   roomSetHint();
+  syncOpenAreaTool();
   var fp=roomFloorPoly(); if(fp)roomZoomTo(fp);
   renderFull();
 }
+// The Açık Alan (F3 open-area) tool only makes sense on a 3-storey building, editing the F3 floor.
+function syncOpenAreaTool(){
+  var btn=document.getElementById('reToolOpen'); if(!btn)return;
+  var show=!!(STATE.threeStorey && STATE.roomEdit && STATE.roomEdit.floor==='f3');
+  btn.style.display=show?'':'none';
+  if(!show && STATE.roomEdit && STATE.roomEdit.tool==='open'){   // tool no longer valid → fall back to Duvar
+    STATE.roomEdit.tool='wall';
+    document.querySelectorAll('#reTool .re-btn').forEach(function(x){x.classList.toggle('active',x.dataset.tool==='wall');});
+    if(STATE.roomEdit.active)roomSetHint();
+  }
+}
 function roomSetHint(){
-  var t=STATE.roomEdit&&STATE.roomEdit.tool,m={wall:'Duvar: sürükleyerek çiz (uçlara/ızgaraya yapışır)',room:'Oda: köşegen sürükle → 4 duvar',door:'Kapı: iç duvara dokun → iç kapı · dış (çevre) duvara dokun → dış kapı (balkon/teras çıkışı)',window:'Pencere: dış duvara dokun → ekle · gövdeyi sürükle → kaydır · ucu sürükle → boyutlandır',stair:'Merdiven: bir duvara sürükle → taşı (yeşil=sığar) · dokun → yön çevir · sadece F1 içinde',erase:'Sil: duvara / kapıya / pencereye dokun'}[t]||'';
+  var t=STATE.roomEdit&&STATE.roomEdit.tool,m={wall:'Duvar: sürükleyerek çiz (uçlara/ızgaraya yapışır)',room:'Oda: köşegen sürükle → 4 duvar',door:'Kapı: iç duvara dokun → iç kapı · dış (çevre) duvara dokun → dış kapı (balkon/teras çıkışı)',window:'Pencere: dış duvara dokun → ekle · gövdeyi sürükle → kaydır · ucu sürükle → boyutlandır',stair:'Merdiven: bir duvara sürükle → taşı (yeşil=sığar) · dokun → yön çevir · sadece F1 içinde',open:'Açık alan: köşegen sürükle → gökyüzüne açık iç teras (sadece F3). Çevresi duvar+kapı, üstü açık.',erase:'Sil: duvara / kapıya / pencereye / açık alana dokun'}[t]||'';
   var el=document.getElementById('roomHint');el.textContent=m;el.classList.add('show');
   roomSyncStairStyleUI();
 }
@@ -1842,6 +1855,14 @@ function renderRoomEditor(){
       out+='<rect x="'+(b0[0]-2.4)+'" y="'+(b0[1]-2.4)+'" width="4.8" height="4.8" fill="#fff" stroke="#0288D1" stroke-width="1"/>';
     }
   }
+  // F3 open areas (açık alan / iç teras) — sky-open rectangles
+  var oas=(data.openAreas||[]);
+  for(var oi2=0;oi2<oas.length;oi2++){var oa=oas[oi2];
+    var oc4=[[oa.u1,oa.v1],[oa.u2,oa.v1],[oa.u2,oa.v2],[oa.u1,oa.v2]].map(function(p){return P(p[0],p[1])});
+    out+='<polygon points="'+oc4.map(function(s){return s[0].toFixed(1)+','+s[1].toFixed(1)}).join(' ')+'" fill="rgba(2,136,209,0.16)" stroke="#0288D1" stroke-width="1.6" stroke-dasharray="5,3"/>';
+    var occ=P((oa.u1+oa.u2)/2,(oa.v1+oa.v2)/2);
+    out+='<text x="'+occ[0].toFixed(1)+'" y="'+(occ[1]+2).toFixed(1)+'" text-anchor="middle" font-size="7" font-weight="700" fill="#0277BD" pointer-events="none">AÇIK</text>';
+  }
   // walls
   var WW=(0.1*sc);
   for(var wi=0;wi<data.walls.length;wi++){var w=data.walls[wi];var a=P(w.u1,w.v1),b=P(w.u2,w.v2);
@@ -1858,9 +1879,10 @@ function renderRoomEditor(){
   }
   // draft preview + live length
   if(STATE.roomEdit.draft){var dr=STATE.roomEdit.draft;
-    if(dr.kind==='room'){
+    if(dr.kind==='room'||dr.kind==='open'){
       var c=[[dr.u1,dr.v1],[dr.u2,dr.v1],[dr.u2,dr.v2],[dr.u1,dr.v2]].map(function(p){return P(p[0],p[1])});
-      out+='<polygon points="'+c.map(function(s){return s[0].toFixed(1)+','+s[1].toFixed(1)}).join(' ')+'" fill="none" stroke="#E65100" stroke-width="'+Math.max(2,WW)+'" stroke-dasharray="4,3"/>';
+      var oc=dr.kind==='open'?'#0288D1':'#E65100', ofill=dr.kind==='open'?'rgba(2,136,209,0.14)':'none';
+      out+='<polygon points="'+c.map(function(s){return s[0].toFixed(1)+','+s[1].toFixed(1)}).join(' ')+'" fill="'+ofill+'" stroke="'+oc+'" stroke-width="'+Math.max(2,WW)+'" stroke-dasharray="4,3"/>';
     }else{
       var a=P(dr.u1,dr.v1),b=P(dr.u2,dr.v2);
       out+='<line x1="'+a[0].toFixed(1)+'" y1="'+a[1].toFixed(1)+'" x2="'+b[0].toFixed(1)+'" y2="'+b[1].toFixed(1)+'" stroke="#E65100" stroke-width="'+Math.max(2,WW)+'" stroke-dasharray="4,3" stroke-linecap="round"/>';
@@ -1877,9 +1899,10 @@ function roomEditDown(e){
   e.preventDefault();
   var lp=roomPointerLocal(e); if(!lp)return;
   var tool=STATE.roomEdit.tool;
-  if(tool==='wall'||tool==='room'){
+  if(tool==='open' && STATE.roomEdit.floor!=='f3') return;   // open-area tool is F3-only
+  if(tool==='wall'||tool==='room'||tool==='open'){
     var s=roomSnapLocal(lp[0],lp[1],null);
-    STATE.roomEdit.draft={kind:tool==='room'?'room':'wall',u1:s[0],v1:s[1],u2:s[0],v2:s[1]};
+    STATE.roomEdit.draft={kind:tool==='room'?'room':(tool==='open'?'open':'wall'),u1:s[0],v1:s[1],u2:s[0],v2:s[1]};
     renderFull();
   }else if(tool==='door'){
     roomPlaceDoor(lp);
@@ -1898,7 +1921,7 @@ function roomEditMove(e){
   e.preventDefault();
   var lp=roomPointerLocal(e); if(!lp)return;
   var dr=STATE.roomEdit.draft;
-  var s=roomSnapLocal(lp[0],lp[1],dr.kind==='room'?null:[dr.u1,dr.v1]);
+  var s=roomSnapLocal(lp[0],lp[1],dr.kind==='wall'?[dr.u1,dr.v1]:null);
   dr.u2=s[0];dr.v2=s[1];
   renderFull();
 }
@@ -1914,6 +1937,13 @@ function roomEditUp(e){
     var u1=Math.min(dr.u1,dr.u2),u2=Math.max(dr.u1,dr.u2),v1=Math.min(dr.v1,dr.v2),v2=Math.max(dr.v1,dr.v2);
     if(u2-u1>=0.5&&v2-v1>=0.5){roomSnapshot();
       data.walls.push({u1:u1,v1:v1,u2:u2,v2:v1},{u1:u2,v1:v1,u2:u2,v2:v2},{u1:u2,v1:v2,u2:u1,v2:v2},{u1:u1,v1:v2,u2:u1,v2:v1});
+      roomScheduleRebuild();
+    }
+  }else if(dr.kind==='open'){
+    var ou1=Math.min(dr.u1,dr.u2),ou2=Math.max(dr.u1,dr.u2),ov1=Math.min(dr.v1,dr.v2),ov2=Math.max(dr.v1,dr.v2);
+    if(ou2-ou1>=0.5&&ov2-ov1>=0.5){roomSnapshot();
+      if(!data.openAreas)data.openAreas=[];
+      data.openAreas.push({u1:ou1,v1:ov1,u2:ou2,v2:ov2});
       roomScheduleRebuild();
     }
   }
@@ -1986,6 +2016,10 @@ function roomEraseAt(lp){
     var px=w.u1+d.t*(w.u2-w.u1),py=w.v1+d.t*(w.v2-w.v1);
     if(Math.hypot(px-lp[0],py-lp[1])<0.6){roomSnapshot();data.doors.splice(di,1);roomScheduleRebuild();renderFull();return}
   }
+  // F3 open area (click inside the rectangle → remove it)
+  if(data.openAreas){for(var oai=0;oai<data.openAreas.length;oai++){var oa=data.openAreas[oai];
+    if(lp[0]>=Math.min(oa.u1,oa.u2)&&lp[0]<=Math.max(oa.u1,oa.u2)&&lp[1]>=Math.min(oa.v1,oa.v2)&&lp[1]<=Math.max(oa.v1,oa.v2)){
+      roomSnapshot();data.openAreas.splice(oai,1);roomScheduleRebuild();renderFull();return;}}}
   // wall (point-to-segment)
   var best=-1,bestD=0.5;
   for(var i=0;i<data.walls.length;i++){var w=data.walls[i];var ux=w.u2-w.u1,vy=w.v2-w.v1,L2=ux*ux+vy*vy||1e-6;
@@ -2011,7 +2045,7 @@ document.getElementById('reUndo').addEventListener('click',roomUndo);
 document.getElementById('reExport').addEventListener('click',exportPlan);
 document.getElementById('reImport').addEventListener('click',function(){document.getElementById('reImportFile').click();});
 document.getElementById('reImportFile').addEventListener('change',function(){if(this.files&&this.files[0])importPlanFile(this.files[0]);this.value='';});
-document.querySelectorAll('#reFloor .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reFloor .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.floor=this.dataset.floor;STATE.roomEdit.draft=null;STATE.roomEdit.winDrag=null;STATE.roomEdit.stairDrag=null;roomUndoStack=[];var fpz=roomFloorPoly();if(fpz)roomZoomTo(fpz);renderFull()})});
+document.querySelectorAll('#reFloor .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reFloor .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.floor=this.dataset.floor;STATE.roomEdit.draft=null;STATE.roomEdit.winDrag=null;STATE.roomEdit.stairDrag=null;roomUndoStack=[];syncOpenAreaTool();var fpz=roomFloorPoly();if(fpz)roomZoomTo(fpz);renderFull()})});
 document.querySelectorAll('#reTool .re-btn').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#reTool .re-btn').forEach(function(x){x.classList.remove('active')});this.classList.add('active');STATE.roomEdit.tool=this.dataset.tool;STATE.roomEdit.draft=null;STATE.roomEdit.winDrag=null;STATE.roomEdit.stairDrag=null;roomSetHint();renderFull()})});
 document.querySelectorAll('#reStairStyle .re-btn').forEach(function(b){b.addEventListener('click',function(){
   var key=STATE.roomEdit&&STATE.roomEdit.key; if(!key)return;
@@ -2041,6 +2075,7 @@ document.querySelectorAll('#storeyToggle button').forEach(function(b){b.addEvent
   if(!STATE.threeStorey && STATE.roomEdit && STATE.roomEdit.floor==='f3'){STATE.roomEdit.floor='f1';}
   if(typeof roomSyncFloorButtons==='function') roomSyncFloorButtons();
   syncF3Controls();
+  syncOpenAreaTool();
   if(typeof syncStylePanel==='function') syncStylePanel();
   if(threeInited)buildVillas3D();
   renderFull();
@@ -2289,12 +2324,13 @@ function buildLandGrass(){
 // 2D space as the slabs (parcel/world-2D [x,y], world Z = −y); roofTopY is the slab's world
 // top height; group is the (untransformed) builder group the slab was added to. Mirrors
 // buildLandGrass(): a green soil layer beneath, then instanced blades scattered over the area.
-function scatterRoofGrass(poly2D, roofTopY, group){
+function scatterRoofGrass(poly2D, roofTopY, group, holes){
   if(!poly2D || poly2D.length<3) return;
   ensureGrassMaterial();
   // Green soil layer just above the slab top (the slab itself is bare concrete).
   var sh=new THREE.Shape(); sh.moveTo(poly2D[0][0],poly2D[0][1]);
   for(var s=1;s<poly2D.length;s++) sh.lineTo(poly2D[s][0],poly2D[s][1]); sh.closePath();
+  if(holes){ for(var hi=0;hi<holes.length;hi++){ var hp=holes[hi]; if(!hp||hp.length<3) continue; var hpath=new THREE.Path(); hpath.moveTo(hp[0][0],hp[0][1]); for(var hj=1;hj<hp.length;hj++)hpath.lineTo(hp[hj][0],hp[hj][1]); hpath.closePath(); sh.holes.push(hpath); } }
   var soil=new THREE.Mesh(new THREE.ShapeGeometry(sh),new THREE.MeshStandardMaterial({color:0x4f7a34,roughness:1,side:THREE.DoubleSide}));
   soil.rotation.x=-Math.PI/2; soil.position.y=roofTopY+0.006; soil.receiveShadow=true; group.add(soil);
   // Polygon bbox + area (shoelace) for rejection sampling + blade count.
@@ -2306,12 +2342,13 @@ function scatterRoofGrass(poly2D, roofTopY, group){
   var inPoly=function(x,y){var inside=false;for(var i=0,j=N-1;i<N;j=i++){
     var xi=poly2D[i][0],yi=poly2D[i][1],xj=poly2D[j][0],yj=poly2D[j][1];
     if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))inside=!inside;}return inside;};
+  var inHoles=function(x,y){ if(!holes)return false; for(var h=0;h<holes.length;h++){var pg=holes[h];if(!pg||pg.length<3)continue;var ins=false;for(var a=0,b=pg.length-1;a<pg.length;b=a++){var xi=pg[a][0],yi=pg[a][1],xj=pg[b][0],yj=pg[b][1];if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))ins=!ins;}if(ins)return true;}return false;};
   var count=Math.min(40000,Math.max(400,Math.round(area*700))), gy=roofTopY+0.02;
   var offset=new Float32Array(count*3),orient=new Float32Array(count),scale=new Float32Array(count*2),
       bend=new Float32Array(count),tint=new Float32Array(count),phase=new Float32Array(count);
   for(var i=0;i<count;i++){
     var px,py,tries=0,ok=false;
-    do{px=minX+Math.random()*(maxX-minX);py=minY+Math.random()*(maxY-minY);tries++;ok=inPoly(px,py);}while(!ok&&tries<40);
+    do{px=minX+Math.random()*(maxX-minX);py=minY+Math.random()*(maxY-minY);tries++;ok=inPoly(px,py)&&!inHoles(px,py);}while(!ok&&tries<40);
     offset[i*3]=px;offset[i*3+1]=gy;offset[i*3+2]=-py;
     orient[i]=Math.random()*Math.PI*2;
     var sy=0.55+Math.random()*0.9;
@@ -2329,6 +2366,132 @@ function scatterRoofGrass(poly2D, roofTopY, group){
   var mesh=new THREE.Mesh(geo,grassMaterial);
   mesh.frustumCulled=false; group.add(mesh);
 }
+// Scatter a few real çalı (EZ-tree Bush 1/2) onto a flat roof polygon, for the green-roof look.
+// poly2D + roofTopY are in the builder group's LOCAL frame (the villa group is lifted by SUB_H later).
+// Async: awaits the cached bush template; only attaches if the group is still live AND the build serial
+// is unchanged, so plants from a superseded rebuild don't pile up. Degrades silently if the EZ-tree
+// module isn't available (offline) — the grass still shows.
+function scatterRoofCali(poly2D, roofTopY, group, serial, avoidPolys){
+  if(typeof getEzTemplate!=='function' || !poly2D || poly2D.length<3) return;
+  var N=poly2D.length, minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  for(var i=0;i<N;i++){var p=poly2D[i];minX=Math.min(minX,p[0]);maxX=Math.max(maxX,p[0]);minY=Math.min(minY,p[1]);maxY=Math.max(maxY,p[1]);}
+  function inPoly(poly,x,y){var ins=false,M=poly.length;for(var a=0,b=M-1;a<M;b=a++){var xi=poly[a][0],yi=poly[a][1],xj=poly[b][0],yj=poly[b][1];if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))ins=!ins;}return ins;}
+  function edgeDist(x,y){var d=1e9;for(var a=0,b=N-1;a<N;b=a++){var ax=poly2D[b][0],ay=poly2D[b][1],bx=poly2D[a][0],by=poly2D[a][1],dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy||1,t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/L2)),px=ax+t*dx,py=ay+t*dy;d=Math.min(d,Math.hypot(x-px,y-py));}return d;}
+  var pts=[],tries=0;
+  while(pts.length<6 && tries<240){tries++;
+    var x=minX+Math.random()*(maxX-minX), y=minY+Math.random()*(maxY-minY);
+    if(!inPoly(poly2D,x,y) || edgeDist(x,y)<0.8) continue;
+    if(avoidPolys){var bad=false;for(var ai=0;ai<avoidPolys.length;ai++){if(inPoly(avoidPolys[ai],x,y)){bad=true;break;}}if(bad)continue;}   // keep off the stair hole / open notches
+    pts.push([x,y]);
+  }
+  if(!pts.length) return;
+  var presets=['Bush 1','Bush 2'];
+  pts.forEach(function(pt,idx){
+    getEzTemplate(presets[idx%2], 1.4).then(function(tmpl){
+      if(group.parent===null || serial!==villaBuildSerial) return;   // superseded → drop
+      var b=tmpl.clone(true);
+      b.scale.multiplyScalar(0.42+Math.random()*0.22);   // çalı-sized on the roof
+      b.rotation.y=Math.random()*Math.PI*2;
+      b.position.set(pt[0], roofTopY+0.02, -pt[1]);       // world Z = −y2D
+      group.add(b);
+    }).catch(function(){});
+  });
+}
+
+// ── Realistic PV solar module (ported from solar-lab) ────────────────
+// A procedurally-drawn cell texture (chamfered mono cells, silver busbars + fingers, backsheet gaps)
+// under a clearcoat "glass" face that glints off the sun, in an aluminium frame. Assets (texture +
+// materials) are built ONCE and shared across every module; placement clones a flat template.
+var SOLAR_CELL=0.156, SOLAR_GAP=0.003, SOLAR_MARGIN=0.014, SOLAR_FRAME_W=0.022, SOLAR_FRAME_H=0.034, SOLAR_LAM=0.006;
+var solarAssets=null;
+function solarCellTexture(cols, rows){
+  var cw=110, W=cols*cw, H=rows*cw;
+  var cv=document.createElement('canvas'); cv.width=W; cv.height=H; var x=cv.getContext('2d');
+  x.fillStyle='#0a0c10'; x.fillRect(0,0,W,H);                       // black backsheet (gap colour)
+  for(var r=0;r<rows;r++) for(var c=0;c<cols;c++){
+    var m=cw*0.05, px=c*cw+m, py=r*cw+m, w=cw-2*m, h=cw-2*m, ch=w*0.14;
+    x.save();
+    x.beginPath();
+    x.moveTo(px+ch,py); x.lineTo(px+w-ch,py); x.lineTo(px+w,py+ch); x.lineTo(px+w,py+h-ch);
+    x.lineTo(px+w-ch,py+h); x.lineTo(px+ch,py+h); x.lineTo(px,py+h-ch); x.lineTo(px,py+ch); x.closePath();
+    x.clip();
+    var g=x.createLinearGradient(px,py,px+w,py+h);
+    g.addColorStop(0,'#0a0f1c'); g.addColorStop(0.5,'#142848'); g.addColorStop(1,'#070a12');
+    x.fillStyle=g; x.fillRect(px,py,w,h);
+    x.strokeStyle='rgba(205,210,222,0.5)'; x.lineWidth=Math.max(1.4,w*0.022);
+    for(var b=1;b<=3;b++){ var bx=px+w*b/4; x.beginPath(); x.moveTo(bx,py); x.lineTo(bx,py+h); x.stroke(); }
+    x.strokeStyle='rgba(185,195,210,0.10)'; x.lineWidth=1;
+    for(var fy=py+5; fy<py+h; fy+=5){ x.beginPath(); x.moveTo(px,fy); x.lineTo(px+w,fy); x.stroke(); }
+    x.restore();
+  }
+  var t=new THREE.CanvasTexture(cv); t.anisotropy=8; t.needsUpdate=true; return t;
+}
+function solarGetAssets(){
+  if(solarAssets) return solarAssets;
+  var cols=6, rows=10;                                             // 60-cell standard module
+  var tex=solarCellTexture(cols,rows);
+  var FaceMat = THREE.MeshPhysicalMaterial ? new THREE.MeshPhysicalMaterial({map:tex,roughness:0.32,metalness:0.0,clearcoat:1.0,clearcoatRoughness:0.09,reflectivity:0.6})
+                                           : new THREE.MeshStandardMaterial({map:tex,roughness:0.25,metalness:0.3});
+  solarAssets={ cols:cols, rows:rows, tex:tex,
+    face:FaceMat,
+    body:new THREE.MeshStandardMaterial({color:0x0a0c10,roughness:0.7}),
+    frame:new THREE.MeshStandardMaterial({color:0xbabdc4,metalness:0.85,roughness:0.3}),
+    leg:new THREE.MeshStandardMaterial({color:0x9a9ea4,metalness:0.8,roughness:0.4}) };
+  return solarAssets;
+}
+// One module lying flat (centred at origin; +Y up). width along X, length along Z. Returns a Group.
+function buildSolarModule(){
+  var a=solarGetAssets();
+  var innerW=a.cols*SOLAR_CELL+(a.cols-1)*SOLAR_GAP, innerL=a.rows*SOLAR_CELL+(a.rows-1)*SOLAR_GAP;
+  var padW=innerW+2*SOLAR_MARGIN, padL=innerL+2*SOLAR_MARGIN, totW=padW+2*SOLAR_FRAME_W, totL=padL+2*SOLAR_FRAME_W;
+  var g=new THREE.Group();
+  var body=new THREE.Mesh(new THREE.BoxGeometry(padW,SOLAR_LAM,padL),a.body); body.position.y=SOLAR_LAM/2; body.castShadow=true; body.receiveShadow=true; g.add(body);
+  var face=new THREE.Mesh(new THREE.PlaneGeometry(innerW,innerL),a.face); face.rotation.x=-Math.PI/2; face.position.y=SOLAR_LAM+0.002; face.receiveShadow=true; g.add(face);
+  function fbar(w,d,x,z){ var m=new THREE.Mesh(new THREE.BoxGeometry(w,SOLAR_FRAME_H,d),a.frame); m.position.set(x,SOLAR_FRAME_H/2,z); m.castShadow=true; m.receiveShadow=true; g.add(m); }
+  fbar(totW,SOLAR_FRAME_W,0,-(padL/2+SOLAR_FRAME_W/2)); fbar(totW,SOLAR_FRAME_W,0,(padL/2+SOLAR_FRAME_W/2));
+  fbar(SOLAR_FRAME_W,padL,-(padW/2+SOLAR_FRAME_W/2),0); fbar(SOLAR_FRAME_W,padL,(padW/2+SOLAR_FRAME_W/2),0);
+  g.userData.dims=[totW,totL];
+  return g;
+}
+// Lay tilted PV rows over a flat roof polygon (green-roof biosolar). Rows run along the roof's long
+// OBB axis; modules tilt about that axis. Footprint-culled to the polygon, kept off avoidPoly (stair).
+// poly2D + roofTopY are in the LOCAL builder frame (villa group lifted by SUB_H later).
+function scatterRoofSolar(poly2D, roofTopY, group, avoidPolys){
+  if(!poly2D || poly2D.length<3) return;
+  var f=villaOBB(poly2D);
+  function inPoly(poly,x,y){var ins=false,M=poly.length;for(var p=0,q=M-1;p<M;q=p++){var xi=poly[p][0],yi=poly[p][1],xj=poly[q][0],yj=poly[q][1];if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))ins=!ins;}return ins;}
+  var uMin=1e9,uMax=-1e9,vMin=1e9,vMax=-1e9;
+  for(var i=0;i<poly2D.length;i++){var lc=worldToLocal2D(f,poly2D[i][0],poly2D[i][1]); uMin=Math.min(uMin,lc[0]);uMax=Math.max(uMax,lc[0]);vMin=Math.min(vMin,lc[1]);vMax=Math.max(vMax,lc[1]);}
+  var tmpl=buildSolarModule(), dims=tmpl.userData.dims, pw=dims[0], pl=dims[1];
+  var tilt=20*Math.PI/180, sinT=Math.sin(tilt), cosT=Math.cos(tilt);
+  var projDepth=pl*cosT, standH=(pl/2)*sinT+0.18, inset=0.9, gapU=0.06, rowPitch=projDepth+0.75;
+  // world basis (world Z = −y2D); yaw aligns module local +X to the roof long axis
+  var Ux=f.dirX, Uz=-f.dirY, yaw=Math.atan2(-Uz,Ux);
+  var a=solarGetAssets();
+  function placeAt(u,v){
+    // require the module's ground footprint corners to be on the roof and clear of avoidPoly
+    for(var su=-1;su<=1;su+=2) for(var sv=-1;sv<=1;sv+=2){
+      var w2=localToWorld2D(f,u+su*pw*0.5,v+sv*projDepth*0.5);
+      if(!inPoly(poly2D,w2[0],w2[1])) return;
+      if(avoidPolys){for(var ai=0;ai<avoidPolys.length;ai++){if(inPoly(avoidPolys[ai],w2[0],w2[1])) return;}}
+    }
+    var c2=localToWorld2D(f,u,v), wx=c2[0], wz=-c2[1];
+    var holder=new THREE.Group(); holder.position.set(wx, roofTopY+standH, wz); holder.rotation.y=yaw;
+    var tg=new THREE.Group(); tg.rotation.x=-tilt; holder.add(tg);
+    tg.add(tmpl.clone(true));
+    // two support pedestals (front low, back high) along the tilt axis
+    for(var sv2=-1;sv2<=1;sv2+=2){
+      var edge=localToWorld2D(f,u,v+sv2*projDepth*0.5);
+      var edgeY=roofTopY+standH+sv2*(pl/2)*sinT, hgt=Math.max(0.06,edgeY-roofTopY);
+      var ped=new THREE.Mesh(new THREE.BoxGeometry(pw*0.8,hgt,0.05),a.leg);
+      ped.position.set(edge[0], roofTopY+hgt/2, -edge[1]); ped.rotation.y=yaw; ped.castShadow=true; group.add(ped);
+    }
+    group.add(holder);
+  }
+  for(var v=vMin+inset+projDepth/2; v<=vMax-inset-projDepth/2; v+=rowPitch)
+    for(var u=uMin+inset+pw/2; u<=uMax-inset-pw/2; u+=pw+gapU)
+      placeAt(u,v);
+}
 function resizeThreeRenderer(){if(!threeRenderer)return;const vp=document.getElementById('viewport');const w=vp.clientWidth,h=vp.clientHeight;threeRenderer.setSize(w,h);if(threeCamera){threeCamera.aspect=w/h;threeCamera.updateProjectionMatrix()}}
 window.addEventListener('resize',()=>{if(threeInited&&STATE.view==='3d')resizeThreeRenderer()});
 
@@ -2344,6 +2507,7 @@ var garageDoors=[];   // road-facing roll-up garage doors {mesh, fullH, headerY,
 var villaEntries=[];
 var stairZones=[]; // {cx, cz, dirX, dirZ, runLen, width, baseY, topY, floor} in world coords
 var villaFootprints=[]; // {poly: [[wx, wz],...], floorYs: [groundY, F2Y, roofY]}
+var villaBuildSerial=0;  // bumped each buildVillas3D — async roof-plant scatters check it so stale rebuilds drop
 // Captured during the 3D build (keyed by villa key) so the 2D ODA editor can show real positions:
 var villaStairMeta={}; // key -> stair hole rect (4 world-2D corners) or null
 var villaOpenMeta={};  // key -> {f1:[{x1,y1,x2,y2,type}], f2:[...]} exterior door/window segments (world-2D)
@@ -2547,6 +2711,64 @@ function buildInteriorWalls(group, poly2D, villaKey, floorKey, baseY, wallH, lif
       wallColliders.push(col); piv.userData.collider=col;
     }
   }
+}
+
+// F3 OPEN AREAS (açık alan / iç teras) — carve a sky-open notch into the third floor. Each entry is a
+// closed rectangle in the villa OBB-local (u,v) frame (same frame as interior walls). For each: the F3
+// floor stays (walkable terrace, optionally green), the F3 ROOF over it is holed open (returned to the
+// caller to cut the roof cap/tiles/grass), and the rectangle edges that face the ENCLOSED F3 get full-
+// height walls — with a door on the longest such edge — so it reads as an internal balcony. Edges that
+// lie on the building's outer boundary are skipped (the exterior facade already encloses there).
+// Returns the open-area outlines as world-2D polygons (for the roof holes).
+function buildF3OpenAreas(group, villaKey, corePoly, f3Poly, f3base, F3, liftY, doorMat){
+  var holes=[];
+  var vi=STATE.interiors&&STATE.interiors[villaKey];
+  if(!vi||!vi.f3||!vi.f3.openAreas||!vi.f3.openAreas.length) return holes;
+  var f=villaOBB(corePoly), TH=0.07, DOOR_H=Math.min(2.05,F3-0.08);
+  // Glass curtain walls onto the open terrace (same transmissive glass as the villa windows) + a thin frame.
+  var glassMat=makeGlassMaterial(false);
+  var frameMat=new THREE.MeshStandardMaterial({color:0x2A2A2A,roughness:0.4,metalness:0.5,side:THREE.DoubleSide});
+  vi.f3.openAreas.forEach(function(r){
+    var u1=Math.min(r.u1,r.u2),u2=Math.max(r.u1,r.u2),v1=Math.min(r.v1,r.v2),v2=Math.max(r.v1,r.v2);
+    if(u2-u1<0.5||v2-v1<0.5) return;
+    var C=[[u1,v1],[u2,v1],[u2,v2],[u1,v2]].map(function(p){return localToWorld2D(f,p[0],p[1]);}); // world-2D
+    holes.push(C);
+    var cx=(C[0][0]+C[2][0])/2, cy=(C[0][1]+C[2][1])/2, info=[];
+    for(var i=0;i<4;i++){
+      var a=C[i], b=C[(i+1)%4], mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2, nx=mx-cx, ny=my-cy, nl=Math.hypot(nx,ny)||1;
+      var interior=pointInPoly2D(mx+nx/nl*0.35, my+ny/nl*0.35, f3Poly);   // outward side still inside building → interior wall
+      info.push({a:a,b:b,interior:interior,len:Math.hypot(b[0]-a[0],b[1]-a[1])});
+    }
+    var doorEdge=-1,best=0; for(var i=0;i<4;i++){ if(info[i].interior&&info[i].len>best){best=info[i].len;doorEdge=i;} }
+    for(var i=0;i<4;i++){
+      var ei=info[i]; if(!ei.interior) continue;
+      var a=ei.a,b=ei.b,dx=b[0]-a[0],dy=b[1]-a[1],L=Math.hypot(dx,dy); if(L<0.1) continue;
+      var ang=Math.atan2(dy,dx), ux=dx/L, uy=dy/L, doorW=(i===doorEdge)?Math.min(0.9,L-0.4):0;
+      var gap=doorW>0?[0.5-(doorW/2)/L,0.5+(doorW/2)/L]:null, segs=gap?[[0,gap[0]],[gap[1],1]]:[[0,1]];
+      var FR=0.06;   // frame bar size
+      segs.forEach(function(s){
+        var sl=(s[1]-s[0])*L; if(sl<0.05) return;
+        var mt=(s[0]+s[1])/2, mx=a[0]+mt*dx, my=a[1]+mt*dy;
+        var glass=new THREE.Mesh(new THREE.BoxGeometry(sl,F3,TH),glassMat);
+        glass.position.set(mx,f3base+F3/2,-my); glass.rotation.y=ang; group.add(glass);
+        // thin frame: bottom sill + top head + end mullions
+        var sill=new THREE.Mesh(new THREE.BoxGeometry(sl,FR,TH+0.02),frameMat); sill.position.set(mx,f3base+FR/2,-my); sill.rotation.y=ang; sill.castShadow=true; group.add(sill);
+        var head=new THREE.Mesh(new THREE.BoxGeometry(sl,FR,TH+0.02),frameMat); head.position.set(mx,f3base+F3-FR/2,-my); head.rotation.y=ang; head.castShadow=true; group.add(head);
+        [s[0],s[1]].forEach(function(tm){var mmx=a[0]+tm*dx,mmy=a[1]+tm*dy;var mull=new THREE.Mesh(new THREE.BoxGeometry(FR,F3,TH+0.02),frameMat);mull.position.set(mmx,f3base+F3/2,-mmy);mull.rotation.y=ang;mull.castShadow=true;group.add(mull);});
+        wallColliders.push({ax:a[0]+s[0]*dx,az:-(a[1]+s[0]*dy),bx:a[0]+s[1]*dx,bz:-(a[1]+s[1]*dy),active:true,floor:'F3int',yLow:liftY+f3base,yHigh:liftY+f3base+F3});
+      });
+      if(doorW>0){
+        var hx=a[0]+gap[0]*dx, hy=a[1]+gap[0]*dy, ex=a[0]+gap[1]*dx, ey=a[1]+gap[1]*dy;
+        // glass transom over the door
+        if(F3-DOOR_H>0.05){ var lint=new THREE.Mesh(new THREE.BoxGeometry(doorW,F3-DOOR_H,TH),glassMat); lint.position.set(a[0]+0.5*dx,f3base+DOOR_H+(F3-DOOR_H)/2,-(a[1]+0.5*dy)); lint.rotation.y=ang; group.add(lint); }
+        var piv=buildHingedDoor(hx, f3base+DOOR_H/2, -hy, doorW, DOOR_H, Math.atan2(uy,ux), 1, glassMat, group);  // glass terrace door
+        var col={ax:hx,az:-hy,bx:ex,bz:-ey,active:true,floor:'F3int',yLow:liftY+f3base,yHigh:liftY+f3base+DOOR_H,isDoor:true};
+        wallColliders.push(col); piv.userData.collider=col;
+      }
+    }
+    if(STATE.roofGreen) scatterRoofGrass(C, f3base+0.03, group);   // green terrace floor (above the F3 interior floor)
+  });
+  return holes;
 }
 
 // Helper: build one straight flight of FLOATING treads. Each tread is a thin slab (6cm) at its
@@ -3667,10 +3889,12 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
 
   // === FLOOR 3 (3-storey option): F2→F3 slab (full F2 ceiling), then walls/interior/floor/facade on the
   // F3 footprint (= F2's, or F1's when set back). Material = the F3 style selector. ===
+  var f3OpenHoles=[];   // sky-open notches carved into F3 (açık alan); cut from the roof cap/tiles/grass below
   if(NF>=3){
     mvPolySlab(f2poly,f2base+F2,SLAB2,matConcreteSlab,stairHolePoly2D?[stairHolePoly2D]:null);   // F2→F3 slab = full F2 ceiling
     buildWallPanels(f3Poly, f3Edges, f3base, F3, openingsF3, matConcreteF3, g, 0.22, SUB_H, 'F3');
     if(villaKey) buildInteriorWalls(g, poly2D, villaKey, 'f3', f3base, F3, SUB_H, matConcreteF3, matDoor, 'F3int');
+    if(villaKey) f3OpenHoles=buildF3OpenAreas(g, villaKey, poly2D, f3Poly, f3base, F3, SUB_H, matDoor);
     (function addF3Floor(){
       var sh=new THREE.Shape(); sh.moveTo(f3Poly[0][0],f3Poly[0][1]);
       for(var si=1;si<f3Poly.length;si++)sh.lineTo(f3Poly[si][0],f3Poly[si][1]); sh.closePath();
@@ -3893,7 +4117,8 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     }
   })();
 
-  mvPolySlab(roofPoly,roofBaseY,SLAB2,matRoofSlab,stairHolePoly2D?[stairHolePoly2D]:null);
+  var roofHoles=(stairHolePoly2D?[stairHolePoly2D]:[]).concat(f3OpenHoles);
+  mvPolySlab(roofPoly,roofBaseY,SLAB2,matRoofSlab,roofHoles.length?roofHoles:null);
   // Ceramic tile surface (60×60cm, tinted by roof style) — used for the rooftop AND the F3 set-back balcony.
   function buildTileSurface(poly, holes, yTop){
     var sh=new THREE.Shape();
@@ -3916,7 +4141,15 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     var tileMesh=new THREE.Mesh(tileGeo,tileMat);
     tileMesh.position.y=yTop+0.003; tileMesh.castShadow=true; tileMesh.receiveShadow=true; g.add(tileMesh);
   }
-  buildTileSurface(roofPoly, stairHolePoly2D?[stairHolePoly2D]:null, roofBaseY+SLAB2);
+  buildTileSurface(roofPoly, roofHoles.length?roofHoles:null, roofBaseY+SLAB2);
+  // Green roof: carpet the terrace with the SAME realistic blade grass as the land, plus a few çalı
+  // (EZ-tree bushes). roofYv is local (the villa group is lifted by SUB_H), matching the tile surface.
+  if(STATE.roofGreen){
+    var roofAvoid=(stairHolePoly2D?[stairHolePoly2D]:[]).concat(f3OpenHoles);   // keep grass/çalı/solar off the open notches
+    scatterRoofGrass(roofPoly, roofYv, g, f3OpenHoles);
+    scatterRoofCali(roofPoly, roofYv, g, villaBuildSerial, roofAvoid);
+    if(STATE.roofSolar) scatterRoofSolar(roofPoly, roofYv, g, roofAvoid);
+  }
 
   // Generic editable-window builder: glass pane + vertical/horizontal mullions + registered panjur.
   // Used for floors the user has edited; un-edited floors keep their original bespoke facade below.
@@ -3962,6 +4195,16 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     for(var pi=0;pi<=postCount;pi++){var pt=pi/postCount;var rpx=re.ax+pt*re.dx,rpz=re.ay+pt*re.dy;var rpost=new THREE.Mesh(new THREE.BoxGeometry(railTh,railH,railTh),matRailing);rpost.position.set(rpx,roofYv+railH/2,-rpz);g.add(rpost)}
     var rmx=(re.ax+re.bx)/2,rmy=(re.ay+re.by)/2;var tR=new THREE.Mesh(new THREE.BoxGeometry(re.len,railTh,railTh),matRailing);tR.position.set(rmx,roofYv+railH,-rmy);tR.rotation.y=re.angle;g.add(tR);
     var mR=new THREE.Mesh(new THREE.BoxGeometry(re.len,railTh,railTh),matRailing);mR.position.set(rmx,roofYv+railH*0.5,-rmy);mR.rotation.y=re.angle;g.add(mR)}
+  // Railing around each F3 open-area hole on the roof terrace — so you don't walk off into the open notch.
+  f3OpenHoles.forEach(function(hp){
+    for(var hi=0;hi<hp.length;hi++){var ha=hp[hi],hb=hp[(hi+1)%hp.length];var hdx=hb[0]-ha[0],hdy=hb[1]-ha[1],hl=Math.hypot(hdx,hdy);if(hl<0.3)continue;
+      var pc=Math.max(2,Math.round(hl/1.5));
+      for(var pi=0;pi<=pc;pi++){var pt=pi/pc,ppx=ha[0]+pt*hdx,ppy=ha[1]+pt*hdy;var pp=new THREE.Mesh(new THREE.BoxGeometry(railTh,railH,railTh),matRailing);pp.position.set(ppx,roofYv+railH/2,-ppy);g.add(pp);}
+      var hmx=(ha[0]+hb[0])/2,hmy=(ha[1]+hb[1])/2,hang=Math.atan2(hdy,hdx);
+      var htR=new THREE.Mesh(new THREE.BoxGeometry(hl,railTh,railTh),matRailing);htR.position.set(hmx,roofYv+railH,-hmy);htR.rotation.y=hang;g.add(htR);
+      wallColliders.push({ax:ha[0],az:-ha[1],bx:hb[0],bz:-hb[1],active:true,floor:'roofRail',yLow:SUB_H+roofYv,yHigh:SUB_H+roofYv+railH});
+    }
+  });
   // === VENT BACA vertex selection ===
   // IMPORTANT: baca needs continuous vertical support to the ground, so it MUST sit above a
   // non-cantilever wall (not the cantilever overhang). For the pentagon, pick the non-cantilever
@@ -4455,6 +4698,7 @@ function addLotOverlay3D(poly,color){
 }
 function buildVillas3D(){
   if(!villaGroup)return;while(villaGroup.children.length)villaGroup.remove(villaGroup.children[0]);
+  villaBuildSerial++;   // invalidate any in-flight async roof-plant scatters from the previous build
   // Reset FP collider/door/entry data each rebuild
   wallColliders.length=0;
   doorPivots.length=0;
@@ -5790,6 +6034,8 @@ STATE.villaStyle='modern'; // kept for back-compat
 STATE.villaStyleF1='turkstone'; // Bal (Tas Duvar honey)
 STATE.villaStyleF2='woodwide';  // Kaba Ahsap
 STATE.villaStyleRoof='beton';
+STATE.roofGreen=true;   // green roof on the villa terrace: real blade grass + a few çalı (EZ-tree bushes)
+STATE.roofSolar=true;   // tilted PV rows on the green roof (biosolar)
 STATE.tileAlignment='world'; // 'villa' = aligned with building walls; 'world' = world-axis (angled)
 STATE.fenceWallStyle='koyu'; // outer land boundary fence wall color (GLOBAL — land boundary, not per villa)
 // Per-villa exterior styles (Tasarım): each villa can differ. Seeded from the global defaults above.
