@@ -264,6 +264,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 .tb-sun input[type="range"]{flex:1;accent-color:var(--accent);height:24px;cursor:pointer}
 #topTimeDisplay{font-family:'DM Mono',monospace;font-size:14px;font-weight:700;color:var(--text);min-width:48px;text-align:right}
 .tb-month{appearance:none;padding:6px 24px 6px 10px;border:1px solid var(--border);border-radius:6px;background:#FFF;font-family:inherit;font-size:13px;font-weight:600;color:var(--text);cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237A7A72'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 6px center}
+/* F3 garden-terrace depth slider in the top bar (next to the F3 size toggle) */
+.tb-f3terrace{display:flex;align-items:center;gap:7px;background:#F5F4EF;border:1.5px solid var(--border);border-radius:8px;padding:7px 11px;font-size:12px;font-weight:700;color:var(--muted);white-space:nowrap}
+.tb-f3terrace input[type="range"]{width:96px;accent-color:var(--accent);cursor:pointer;height:20px}
+.tb-f3terrace #f3TerraceVal{font-family:'DM Mono',monospace;color:var(--text);min-width:32px;text-align:right}
+.tb-f3terrace.tb-disabled,#f3RoadBalcBtn.tb-disabled{opacity:.4;pointer-events:none}
 .tb-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 .tb-toggle{display:flex;border:1.5px solid var(--border);border-radius:8px;overflow:hidden}
 .tb-toggle button{padding:9px 16px;border:none;background:#FFF;font-family:inherit;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;transition:all .12s;min-width:50px}
@@ -296,7 +301,13 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 #modeToggle.is-character .mode-label:nth-child(1){color:#aaa}
 #modeToggle:not(.is-character) .mode-label:nth-child(3){color:#aaa}
 #fpHint{position:absolute;top:90px;right:10px;z-index:25;padding:8px 12px;background:rgba(20,20,20,.78);color:#fff;border-radius:6px;font-size:12px;display:none;box-shadow:0 2px 6px rgba(0,0,0,.3);max-width:320px}
-#areaTable{position:absolute;top:52px;left:10px;z-index:25;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-family:inherit;font-size:11px;color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.08);user-select:none;pointer-events:none;display:none}
+#areaTable{position:absolute;top:92px;right:10px;z-index:25;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-family:inherit;font-size:11px;color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.08);user-select:none;pointer-events:none;display:none}
+/* Sun/hour control — bottom-center overlay on the 3D canvas */
+#canvasSun{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);z-index:22;display:none;align-items:center;gap:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px 14px;box-shadow:0 2px 10px rgba(0,0,0,.12);font-family:inherit}
+#canvasSun .tb-sun-icon{font-size:18px;color:#E69500}
+#canvasSun input[type="range"]{width:200px;accent-color:var(--accent);height:24px;cursor:pointer}
+#canvasSun #topTimeDisplay{font-family:'DM Mono',monospace;font-size:14px;font-weight:700;color:var(--text);min-width:48px;text-align:right}
+@media(max-width:560px){#canvasSun{padding:6px 10px;gap:7px}#canvasSun input[type="range"]{width:120px}}
 #areaTable .at-title{font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px;letter-spacing:.02em;text-transform:uppercase}
 #areaTable table{border-collapse:collapse}
 #areaTable th,#areaTable td{padding:1px 7px;text-align:right;font-variant-numeric:tabular-nums}
@@ -436,17 +447,6 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
       <option value="optimum5">Plan B — Y-Radyal</option>
       <option value="serbest">Serbest</option>
     </select>
-    <div class="tb-sun" id="topSun">
-      <span class="tb-sun-icon" aria-hidden="true">☀</span>
-      <input type="range" id="topSunSlider" min="6" max="20" step="0.25" value="14" aria-label="Saat">
-      <span id="topTimeDisplay">14:00</span>
-      <select id="topMonthSelect" class="tb-month" aria-label="Ay">
-        <option value="0">Ocak</option><option value="1">Şubat</option><option value="2">Mart</option>
-        <option value="3" selected>Nisan</option><option value="4">Mayıs</option><option value="5">Haziran</option>
-        <option value="6">Temmuz</option><option value="7">Ağustos</option><option value="8">Eylül</option>
-        <option value="9">Ekim</option><option value="10">Kasım</option><option value="11">Aralık</option>
-      </select>
-    </div>
     <div class="tb-toggle" id="storeyToggle" title="Bina kat sayısı (tüm villalar)">
       <button data-storeys="2" class="active">2 Kat</button>
       <button data-storeys="3">3 Kat</button>
@@ -454,6 +454,12 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
     <div class="tb-toggle" id="f3SizeSel" title="3. Kat boyutu" style="display:none">
       <button data-f3size="f2" class="active">F3 = 2.Kat</button>
       <button data-f3size="f1">F3 = 1.Kat</button>
+    </div>
+    <button class="tb-room" id="f3RoadBalcBtn" title="3. kat yol tarafı balkon (klima üniteleri için)" style="display:none">Yol Balkon</button>
+    <div class="tb-f3terrace" id="f3TerraceWrap" title="3. kat bahçe terası (% derinlik)" style="display:none">
+      <span>Teras</span>
+      <input type="range" id="f3TerraceSlider" min="0" max="60" step="5" value="0" aria-label="Bahçe terası %">
+      <span id="f3TerraceVal">0%</span>
     </div>
     <div class="tb-actions">
       <div class="tb-toggle" id="planSizeToggle" title="Villa boyutu (A & B)">
@@ -582,6 +588,17 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
       <span class="ios-switch"><input type="checkbox" id="modeToggleInput"><span class="track"><span class="thumb"></span></span></span>
       <span class="mode-label">Karakter</span>
     </label>
+    <div id="canvasSun">
+      <span class="tb-sun-icon" aria-hidden="true">☀</span>
+      <input type="range" id="topSunSlider" min="6" max="20" step="0.25" value="14" aria-label="Saat">
+      <span id="topTimeDisplay">14:00</span>
+      <select id="topMonthSelect" class="tb-month" aria-label="Ay">
+        <option value="0">Ocak</option><option value="1">Şubat</option><option value="2">Mart</option>
+        <option value="3" selected>Nisan</option><option value="4">Mayıs</option><option value="5">Haziran</option>
+        <option value="6">Temmuz</option><option value="7">Ağustos</option><option value="8">Eylül</option>
+        <option value="9">Ekim</option><option value="10">Kasım</option><option value="11">Aralık</option>
+      </select>
+    </div>
     <div id="fpHint">WASD: hareket · Yön Tuşları: bak · Kapı: otomatik · P: Panjur · ESC: çık · Fare: UI serbest</div>
     <div id="fpPrompt"></div>
     <div id="touchControls">
@@ -632,7 +649,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
     </div>
     <input type="file" id="reImportFile" accept="application/json,.json" style="display:none">
     <div id="roomHint"></div>
-    <div id="objectPalette">
+    <div id="objectPalette" class="panel-collapsed">
       <div class="panel-header" data-collapse-target="objectPalette">
         <span class="panel-title">Nesneler</span>
         <span class="panel-arrow">▾</span>
@@ -760,6 +777,8 @@ const STATE={
   floorCount:2,
   threeStorey:false,   // false → 2 interior storeys (F1+F2); true → add F3 flush above F2
   f3MatchF1:false,     // when 3-storey: false → F3 matches F2 footprint; true → F3 matches F1 (set back)
+  f3RoadBalcony:false, // F3=F2 only: carve a fixed road-side strip into an open balcony (AC units)
+  f3GardenTerracePct:0,// F3=F2 only: % of the floor's garden→road depth opened as a garden terrace
 
   villas:[
     {id:'A',cx:10.0,cy:24.0,angle:0,sides:4,vw:9,vh:8.5,customPoly:null,fill:'var(--lot1v)',stroke:'var(--lot1)',text:'var(--lot1)'},
@@ -1353,6 +1372,61 @@ function cantF2Poly(poly2D,rectCantilever){
   }
   return f2;
 }
+// ── F3 open-area modifiers: road-side AC balcony + garden-side terrace ───────────────────────────────
+// Both only apply when 3-storey AND F3=F2 (cantilever). The road balcony is a fixed-depth strip carved off
+// the road-facing edge; the garden terrace depth is a % of the floor's garden→road span. ONE carve helper is
+// shared by the 3D build, the m² table and the ODA editor so geometry/areas never diverge. F3=F1 (set back)
+// already exposes a full perimeter ledge, so the modifiers are disabled there.
+const F3_ROAD_BALC_D=1.5;   // fixed road-side balcony depth (m) — room for AC condensers + access
+function f3GardenAxis(cent){
+  var gpx=-pRoadNy, gpy=pRoadNx;
+  var gcx=(P2[0]+P3[0]+P4[0]+P5[0]+P6[0])/5, gcy=(P2[1]+P3[1]+P4[1]+P5[1]+P6[1])/5;
+  if((gcx-cent[0])*gpx+(gcy-cent[1])*gpy>0){gpx=-gpx;gpy=-gpy}   // orient toward garden (away from road frontage)
+  return [gpx,gpy];
+}
+// Outward-normal edge list for an arbitrary polygon (winding-independent — works for Villa C's reversed C).
+function f3PolyEdges(poly){
+  var n=poly.length, cent=polyCentroid(poly), out=[];
+  for(var i=0;i<n;i++){
+    var a=poly[i], b=poly[(i+1)%n], dx=b[0]-a[0], dy=b[1]-a[1], l=Math.hypot(dx,dy)||1;
+    var nx=-dy/l, ny=dx/l, mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2;
+    if((mx+nx-cent[0])*(mx+nx-cent[0])+(my+ny-cent[1])*(my+ny-cent[1])<(mx-nx-cent[0])*(mx-nx-cent[0])+(my-ny-cent[1])*(my-ny-cent[1])){nx=-nx;ny=-ny;}
+    out.push({ax:a[0],ay:a[1],bx:b[0],by:b[1],dx:dx,dy:dy,len:l,nx:nx,ny:ny,ux:dx/l,uy:dy/l,angle:Math.atan2(dy,dx)});
+  }
+  return out;
+}
+// Clip a strip of `depth` off one edge → {enclosed, strip} (either [] if degenerate).
+function f3CarveEdge(poly, e, depth){
+  if(depth<=0.05) return {enclosed:poly, strip:[]};
+  var ix=(e.ax+e.bx)/2 - e.nx*depth, iy=(e.ay+e.by)/2 - e.ny*depth;
+  return {enclosed:clipPolyByLine(poly, ix, iy, e.nx, e.ny), strip:clipPolyByLine(poly, ix, iy, -e.nx, -e.ny)};
+}
+// Apply the active road/garden carves to an F3 footprint. → {enclosed, strips:[{poly,kind}], roadIdx, gardenIdx}.
+function f3CarvePoly(poly, edges){
+  var res={enclosed:poly, strips:[], roadIdx:-1, gardenIdx:-1};
+  if(!STATE.threeStorey || STATE.f3MatchF1 || !poly || poly.length<3) return res;
+  var roadOn=!!STATE.f3RoadBalcony, gpct=STATE.f3GardenTerracePct||0;
+  if(!roadOn && gpct<=0) return res;
+  var cent=polyCentroid(poly), ga=f3GardenAxis(cent), gpx=ga[0], gpy=ga[1];
+  var rBest=-Infinity, gBest=-Infinity, rIdx=-1, gIdx=-1;
+  for(var i=0;i<edges.length;i++){var d=edges[i].nx*gpx+edges[i].ny*gpy; if(-d>rBest){rBest=-d;rIdx=i} if(d>gBest){gBest=d;gIdx=i}}
+  res.roadIdx=rIdx; res.gardenIdx=gIdx;
+  var mn=Infinity,mx=-Infinity;
+  for(var k=0;k<poly.length;k++){var pr=poly[k][0]*gpx+poly[k][1]*gpy; if(pr<mn)mn=pr; if(pr>mx)mx=pr;}
+  var floorDepth=mx-mn, enclosed=poly;
+  if(roadOn && rIdx>=0){
+    var rc=f3CarveEdge(enclosed, edges[rIdx], F3_ROAD_BALC_D);
+    if(rc.enclosed.length>=3 && rc.strip.length>=3){enclosed=rc.enclosed; res.strips.push({poly:rc.strip, kind:'road'});}
+  }
+  if(gpct>0 && gIdx>=0 && gIdx!==rIdx){
+    var gd=floorDepth*Math.min(0.9, gpct/100);
+    var ee=f3PolyEdges(enclosed), gB2=-Infinity, gI2=-1;   // re-find garden edge on the (road-carved) enclosed poly
+    for(var j=0;j<ee.length;j++){var dd=ee[j].nx*gpx+ee[j].ny*gpy; if(dd>gB2){gB2=dd;gI2=j}}
+    if(gI2>=0){var gc=f3CarveEdge(enclosed, ee[gI2], gd); if(gc.enclosed.length>=3 && gc.strip.length>=3){enclosed=gc.enclosed; res.strips.push({poly:gc.strip, kind:'garden'});}}
+  }
+  res.enclosed=enclosed;
+  return res;
+}
 // Per-house floor areas for the static 2D info table. Optimum rect+clipC modes only (A&B rectangles, C clipped).
 // F1 = body footprint (+ odalı connection, which is part of the house); F2 = the çıkma outline (cantF2Poly);
 // F3 (if 3-storey) = F1-body (set back) or F2 per the F3-size toggle. Garage is a separate ground structure
@@ -1369,13 +1443,19 @@ function villaFloorAreas(){
   return [['A',R.rects[0],hasCikma],['B',R.rects[1],hasCikma],['C',STATE.pClipC,false]].map(([key,poly,rc])=>{
     const body=polyArea(poly), f2body=polyArea(cantF2Poly(poly,rc));
     const conn=connOf(key), garage=garOf(key);
-    const f1=body+conn, f2=f2body, f3=NF>=3?(STATE.f3MatchF1?body:f2body):0;
-    return {key,NF,f1,f2,f3,conn,garage,total:f1+f2+f3};
+    let f3=0, f3open=0;   // F3 enclosed area; open-air balcony/terrace carved off it (reported apart)
+    if(NF>=3){
+      if(STATE.f3MatchF1){ f3=body; }
+      else { const fp2=cantF2Poly(poly,rc), cv=f3CarvePoly(fp2, f3PolyEdges(fp2));
+        f3=polyArea(cv.enclosed); cv.strips.forEach(s=>{ f3open+=polyArea(s.poly); }); }
+    }
+    const f1=body+conn, f2=f2body;
+    return {key,NF,f1,f2,f3,f3open,conn,garage,total:f1+f2+f3};
   });
 }
 function updateAreaTable(){
   const el=document.getElementById('areaTable'); if(!el)return;
-  const rows=(STATE.view!=='3d'&&STATE.mode==='parcelled')?villaFloorAreas():null;
+  const rows=(STATE.mode==='parcelled')?villaFloorAreas():null;   // shown in both 2D plan and 3D view
   if(!rows){el.style.display='none';return;}
   el.style.display='block';
   const NF=rows[0].NF, lot=['var(--lot1)','var(--lot2)','var(--lot3)'];
@@ -1383,6 +1463,7 @@ function updateAreaTable(){
   rows.forEach((r,i)=>{h+=`<tr style="color:${lot[i]}"><td>${r.key}</td><td>${r.f1.toFixed(0)}</td><td>${r.f2.toFixed(0)}</td>`+(NF>=3?`<td>${r.f3.toFixed(0)}</td>`:'')+`<td class="at-total">${r.total.toFixed(0)}</td></tr>`;});
   h+='</tbody></table><div class="at-foot">Konut toplam: <b>'+rows.reduce((s,r)=>s+r.total,0).toFixed(0)+' m²</b>';
   if(rows.some(r=>r.conn>0))h+=' · F1 odalı bağlantı dahil';
+  if(rows.some(r=>r.f3open>0))h+='<br>F3 açık alan (balkon/teras): '+rows.reduce((s,r)=>s+(r.f3open||0),0).toFixed(0)+' m²';
   if(rows.some(r=>r.garage>0))h+='<br>Garaj (ayrı): '+rows.reduce((s,r)=>s+r.garage,0).toFixed(0)+' m²';
   h+='</div>';
   el.innerHTML=h;
@@ -1592,6 +1673,8 @@ function roomVilla(){var vs=getEditableVillas();return vs.find(function(v){retur
 // so walls stay consistent between the editor and the 3D builder regardless of which outline is shown.
 function roomFloorPoly(){var v=roomVilla();if(!v)return null;
   if(STATE.roomEdit.floor==='f3'&&STATE.f3MatchF1)return v.poly;   // F3 set back → F1 footprint
+  // F3 over F2: the road-balcony / garden-terrace modifiers carve the footprint → edit the enclosed outline.
+  if(STATE.roomEdit.floor==='f3'&&villaF2Poly[v.key]&&villaF2Poly[v.key].length>=3){var f3b=villaF2Poly[v.key];return f3CarvePoly(f3b,f3PolyEdges(f3b)).enclosed;}
   if((STATE.roomEdit.floor==='f2'||STATE.roomEdit.floor==='f3')&&villaF2Poly[v.key]&&villaF2Poly[v.key].length>=3)return villaF2Poly[v.key];
   // Plan E (room connection): on F1 the connecting wing is PART of the house, so the ODA plan edits the
   // villa+wing UNION as one continuous outline — windows can be placed on the wing's outer walls too. The
@@ -2021,6 +2104,15 @@ function renderRoomEditor(){
     var occ=P((oa.u1+oa.u2)/2,(oa.v1+oa.v2)/2);
     out+='<text x="'+occ[0].toFixed(1)+'" y="'+(occ[1]+2).toFixed(1)+'" text-anchor="middle" font-size="7" font-weight="700" fill="#0277BD" pointer-events="none">AÇIK</text>';
   }
+  // F3 modifier strips (road balcony / garden terrace) — open-air decks carved off the F2 footprint
+  if(STATE.roomEdit.floor==='f3' && villaF2Poly[v.key] && villaF2Poly[v.key].length>=3){
+    var f3cb=villaF2Poly[v.key], f3cv=f3CarvePoly(f3cb, f3PolyEdges(f3cb));
+    for(var csi=0;csi<f3cv.strips.length;csi++){var cst=f3cv.strips[csi]; if(!cst.poly||cst.poly.length<3)continue;
+      out+='<polygon points="'+ps(cst.poly)+'" fill="rgba(2,136,209,0.12)" stroke="#0288D1" stroke-width="1.4" stroke-dasharray="5,3"/>';
+      var ctc=polyCentroid(cst.poly), ctp=S(ctc[0],ctc[1]);
+      out+='<text x="'+ctp[0].toFixed(1)+'" y="'+(ctp[1]+2).toFixed(1)+'" text-anchor="middle" font-size="7" font-weight="700" fill="#0277BD" pointer-events="none">'+(cst.kind==='road'?'BALKON':'TERAS')+'</text>';
+    }
+  }
   // walls
   var WW=(0.1*sc);
   for(var wi=0;wi<data.walls.length;wi++){var w=data.walls[wi];var a=P(w.u1,w.v1),b=P(w.u2,w.v2);
@@ -2225,6 +2317,16 @@ function syncF3Controls(){
   var d=STATE.threeStorey?'':'none';
   var sz=document.getElementById('f3SizeSel'); if(sz)sz.style.display=d;            // size toggle (top bar)
   var dc=document.getElementById('f3DesignControls'); if(dc)dc.style.display=d;     // design grid (Tasarım)
+  // Road balcony + garden terrace live in the top bar, only when 3-storey. They only APPLY when F3=F2
+  // (cantilever) — F3=F1 already exposes a full perimeter ledge, so they grey out there.
+  var mod=STATE.threeStorey && !STATE.f3MatchF1;
+  var rbBtn=document.getElementById('f3RoadBalcBtn');
+  if(rbBtn){ rbBtn.style.display=d; rbBtn.classList.toggle('tb-disabled',!mod); rbBtn.classList.toggle('active',mod&&!!STATE.f3RoadBalcony); }
+  var tWrap=document.getElementById('f3TerraceWrap');
+  if(tWrap){ tWrap.style.display=(d===''?'flex':'none'); tWrap.classList.toggle('tb-disabled',!mod); }
+  var tSl=document.getElementById('f3TerraceSlider'), tVal=document.getElementById('f3TerraceVal');
+  if(tSl)tSl.value=STATE.f3GardenTerracePct||0;
+  if(tVal)tVal.textContent=(STATE.f3GardenTerracePct||0)+'%';
 }
 document.querySelectorAll('#storeyToggle button').forEach(function(b){b.addEventListener('click',function(){
   STATE.threeStorey=(this.dataset.storeys==='3');
@@ -2242,9 +2344,16 @@ document.querySelectorAll('#storeyToggle button').forEach(function(b){b.addEvent
 document.querySelectorAll('#f3SizeSel button').forEach(function(b){b.addEventListener('click',function(){
   STATE.f3MatchF1=(this.dataset.f3size==='f1');
   document.querySelectorAll('#f3SizeSel button').forEach(function(x){x.classList.toggle('active',(x.dataset.f3size==='f1')===STATE.f3MatchF1);});
+  syncF3Controls();   // F3=F1 disables the road/garden modifiers
   if(threeInited)buildVillas3D();
   renderFull();
 })});
+// F3 road-side AC balcony toggle (top bar) — open the road strip into a railed deck
+var _f3rb=document.getElementById('f3RoadBalcBtn');
+if(_f3rb)_f3rb.addEventListener('click',function(){ STATE.f3RoadBalcony=!STATE.f3RoadBalcony; this.classList.toggle('active',STATE.f3RoadBalcony); if(threeInited)buildVillas3D(); renderFull(); });
+// F3 garden terrace depth slider (top bar) — % of the floor's garden→road depth
+var _f3ts=document.getElementById('f3TerraceSlider');
+if(_f3ts)_f3ts.addEventListener('input',function(){ STATE.f3GardenTerracePct=parseInt(this.value)||0; var lbl=document.getElementById('f3TerraceVal'); if(lbl)lbl.textContent=this.value+'%'; if(threeInited)buildVillas3D(); renderFull(); });
 // Dir select
 document.getElementById('dirSelect').addEventListener('change',function(){STATE.divDir=this.value;STATE.pOptimalAngle=null;pRecalcAll()});
 // Villa size (now controlled by canvas resize handles, no sidebar inputs)
@@ -2314,7 +2423,7 @@ document.getElementById('downloadBtn').addEventListener('click',function(){
 let threeInited=false,threeScene,threeCamera,threeRenderer,threeControls,threeSunLight,threeAnimId=null,villaGroup,objectGroup,landFenceGroup;
 const VILLA_COLORS=[0xD85A30,0x185FA5,0x534AB7];
 
-document.querySelectorAll('#viewToggle .toggle-btn').forEach(b=>{b.addEventListener('click',function(){document.querySelectorAll('#viewToggle .toggle-btn').forEach(x=>x.classList.remove('active'));this.classList.add('active');STATE.view=this.dataset.view;const svg=document.getElementById('map'),cv=document.getElementById('threeCanvas'),sun=document.getElementById('sunSection'),pal=document.getElementById('objectPalette'),vsp=document.getElementById('villaStylePicker');if(STATE.view==='3d'){svg.style.display='none';cv.style.display='block';sun.style.display='';pal.classList.add('show');vsp.classList.add('show');document.getElementById('roomEditBar').classList.remove('show');document.getElementById('roomHint').classList.remove('show');document.getElementById('roomBtn').classList.remove('active');if(!threeInited)initThreeScene(cv);buildVillas3D();updateSun3D();animateThree()}else{svg.style.display='';cv.style.display='none';sun.style.display='none';pal.classList.remove('show');vsp.classList.remove('show');if(threeAnimId){cancelAnimationFrame(threeAnimId);threeAnimId=null}roomSyncOnShow()}updateAreaTable()})});
+document.querySelectorAll('#viewToggle .toggle-btn').forEach(b=>{b.addEventListener('click',function(){document.querySelectorAll('#viewToggle .toggle-btn').forEach(x=>x.classList.remove('active'));this.classList.add('active');STATE.view=this.dataset.view;const svg=document.getElementById('map'),cv=document.getElementById('threeCanvas'),sun=document.getElementById('sunSection'),pal=document.getElementById('objectPalette'),vsp=document.getElementById('villaStylePicker');var csun=document.getElementById('canvasSun');if(STATE.view==='3d'){svg.style.display='none';cv.style.display='block';sun.style.display='';pal.classList.add('show');vsp.classList.add('show');if(csun)csun.style.display='flex';document.getElementById('roomEditBar').classList.remove('show');document.getElementById('roomHint').classList.remove('show');document.getElementById('roomBtn').classList.remove('active');if(!threeInited)initThreeScene(cv);buildVillas3D();updateSun3D();animateThree()}else{svg.style.display='';cv.style.display='none';sun.style.display='none';pal.classList.remove('show');vsp.classList.remove('show');if(csun)csun.style.display='none';if(threeAnimId){cancelAnimationFrame(threeAnimId);threeAnimId=null}roomSyncOnShow()}updateAreaTable()})});
 
 function solarPosition(lat,lon,month,hour){const doy=[15,46,74,105,135,166,196,227,258,288,319,349][month],decl=23.45*Math.sin((360/365)*(284+doy)*Math.PI/180)*Math.PI/180,latR=lat*Math.PI/180,solarNoon=12-(lon-30)/15,ha=(hour-solarNoon)*15*Math.PI/180,sinE=Math.sin(latR)*Math.sin(decl)+Math.cos(latR)*Math.cos(decl)*Math.cos(ha),el=Math.asin(Math.max(-1,Math.min(1,sinE))),cosAz=(Math.sin(decl)-Math.sin(latR)*sinE)/(Math.cos(latR)*Math.cos(el)+1e-9);let az=Math.acos(Math.max(-1,Math.min(1,cosAz)));if(ha>0)az=2*Math.PI-az;return{elevation:el,azimuth:az}}
 function sunDirection(m,h){const{elevation:el,azimuth:az}=solarPosition(LAT,LON,m,h);if(el<0)return null;const d=80;return{x:d*Math.cos(el)*Math.sin(az),y:d*Math.sin(el),z:-d*Math.cos(el)*Math.cos(az),elevation:el,azimuth:az}}
@@ -3757,7 +3866,21 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
   // F3 footprint + the TOP footprint the roof sits on. F3 matches F2 (cantilever) by default, or F1
   // (poly2D, set back) when chosen. The roof follows the topmost interior storey.
   var f3SetBack=(NF>=3 && STATE.f3MatchF1);
-  var f3Poly=f3SetBack?poly2D:f2poly, f3Edges=f3SetBack?edges:f2edges, f3N=f3SetBack?n:f2n, f3LongIdx=f3SetBack?longIdx:f2longIdx;
+  var f3FullPoly=f3SetBack?poly2D:f2poly, f3FullEdges=f3SetBack?edges:f2edges, f3FullN=f3SetBack?n:f2n, f3FullLongIdx=f3SetBack?longIdx:f2longIdx;
+  // F3 modifiers (road balcony + garden terrace) carve open-air strips off the F2-matched footprint. When any
+  // strip is active, F3 walls/floor/roof/openings all follow the ENCLOSED polygon; the strips become railed
+  // decks on the F2 ceiling slab. f3DoorEdges marks the enclosed edges that back onto a strip (→ access door).
+  var f3Carve=(NF>=3)?f3CarvePoly(f3FullPoly, f3FullEdges):{enclosed:f3FullPoly,strips:[],roadIdx:-1,gardenIdx:-1};
+  var f3Strips=f3Carve.strips, f3DoorEdges={};
+  var f3Poly, f3Edges, f3N, f3LongIdx;
+  if(f3Strips.length){
+    f3Poly=f3Carve.enclosed; f3Edges=f3PolyEdges(f3Poly); f3N=f3Edges.length;
+    f3LongIdx=0; for(var fli=1,flm=f3Edges[0].len;fli<f3N;fli++){if(f3Edges[fli].len>flm){flm=f3Edges[fli].len;f3LongIdx=fli;}}
+    for(var sfi=0;sfi<f3N;sfi++){var ed=f3Edges[sfi], dmx=(ed.ax+ed.bx)/2+ed.nx*0.3, dmy=(ed.ay+ed.by)/2+ed.ny*0.3;
+      for(var spi=0;spi<f3Strips.length;spi++){ if(pip(dmx,dmy,f3Strips[spi].poly)){ f3DoorEdges[sfi]=f3Strips[spi].kind; break; } }}
+  }else{
+    f3Poly=f3FullPoly; f3Edges=f3FullEdges; f3N=f3FullN; f3LongIdx=f3FullLongIdx;
+  }
   var roofPoly=(NF>=3)?f3Poly:f2poly, roofEdges=(NF>=3)?f3Edges:f2edges, roofN=(NF>=3)?f3N:f2n;
 
   // Exterior windows are now data-driven: an AUTO list (the editor's starting point) per floor, which the
@@ -3844,7 +3967,9 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     for(var foi3=0;foi3<f3N;foi3++){
       openingsF3[foi3]=[];
       var fe3=f3Edges[foi3]; if(fe3.len<2) continue;
-      if(foi3===f3LongIdx){
+      if(f3DoorEdges[foi3]){   // edge backs onto an open balcony/terrace → glass access door
+        autoWin3.push({edge:foi3, t:0.5, width:Math.min(2.2,fe3.len*0.5), type:'door'});
+      }else if(foi3===f3LongIdx){
         autoWin3.push({edge:foi3, t:0.2, width:fe3.len*0.22, height:g2H2, sillY:g2SillY});
         autoWin3.push({edge:foi3, t:0.62, width:fe3.len*0.3, height:g2H2, sillY:g2SillY});
       }else{
@@ -4154,6 +4279,24 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
         var bmx=(be.ax+be.bx)/2, bmy=(be.ay+be.by)/2;
         var btR=new THREE.Mesh(new THREE.BoxGeometry(be.len,railTh,railTh),matRailing); btR.position.set(bmx,f3base+railH,-bmy); btR.rotation.y=be.angle; g.add(btR);
         var bmR=new THREE.Mesh(new THREE.BoxGeometry(be.len,railTh,railTh),matRailing); bmR.position.set(bmx,f3base+railH*0.5,-bmy); bmR.rotation.y=be.angle; g.add(bmR);
+        wallColliders.push({ax:be.ax,az:-be.ay,bx:be.bx,bz:-be.by,active:true,floor:'balcRail',yLow:SUB_H+f3base,yHigh:SUB_H+f3base+railH});
+      }
+    }
+    // F3 modifier strips (road balcony / garden terrace): open-air decks on the F2 ceiling slab. Tile the deck
+    // and railing the OPEN edges (the inner edge backs onto the enclosed F3 wall built above, which has the door).
+    for(var sIdx=0;sIdx<f3Strips.length;sIdx++){
+      var sp=f3Strips[sIdx].poly; if(!sp||sp.length<3) continue;
+      buildTileSurface(sp, null, f3base);   // deck floor (rooftop ceramic), flush with the F3 floor line
+      var spEdges=f3PolyEdges(sp);
+      for(var se=0;se<spEdges.length;se++){
+        var be=spEdges[se]; if(be.len<0.4) continue;
+        var imx=(be.ax+be.bx)/2-be.nx*0.3, imy=(be.ay+be.by)/2-be.ny*0.3;
+        if(pip(imx,imy,f3Poly)) continue;   // inner edge → backs onto the enclosed interior, no railing
+        var bpc=Math.max(2,Math.round(be.len/1.5));
+        for(var bpi=0;bpi<=bpc;bpi++){var bpt=bpi/bpc, bpx=be.ax+bpt*be.dx, bpz=be.ay+bpt*be.dy; var bpost=new THREE.Mesh(new THREE.BoxGeometry(railTh,railH,railTh),matRailing); bpost.position.set(bpx,f3base+railH/2,-bpz); g.add(bpost);}
+        var smx=(be.ax+be.bx)/2, smy=(be.ay+be.by)/2;
+        var stR=new THREE.Mesh(new THREE.BoxGeometry(be.len,railTh,railTh),matRailing); stR.position.set(smx,f3base+railH,-smy); stR.rotation.y=be.angle; g.add(stR);
+        var smR=new THREE.Mesh(new THREE.BoxGeometry(be.len,railTh,railTh),matRailing); smR.position.set(smx,f3base+railH*0.5,-smy); smR.rotation.y=be.angle; g.add(smR);
         wallColliders.push({ax:be.ax,az:-be.ay,bx:be.bx,bz:-be.by,active:true,floor:'balcRail',yLow:SUB_H+f3base,yHigh:SUB_H+f3base+railH});
       }
     }
@@ -5016,6 +5159,7 @@ function buildVillas3D(){
     for(let i=0;i<3;i++){const l=STATE.pParcels[i];if(l&&l.length>=3)addLotOverlay3D(l,VILLA_COLORS[i])}
   }
   if(typeof updateSolarTracking==='function') updateSolarTracking();   // aim freshly-built panels (fixed optimum or live tracking)
+  updateAreaTable();   // keep the m² table in sync after any 3D rebuild (it shows in 3D too now)
 }
 
 // Re-aim every roof PV panel. Tracking ON → dual-axis "face the live sun" (computed from the parcel's
@@ -6100,6 +6244,7 @@ setTimeout(()=>{
   document.getElementById('sunSection').style.display='';
   document.getElementById('objectPalette').classList.add('show');
   document.getElementById('villaStylePicker').classList.add('show');
+  document.getElementById('canvasSun').style.display='flex';
   initThreeScene(document.getElementById('threeCanvas'));
   buildVillas3D();updateSun3D();animateThree();
 },100);
@@ -6436,26 +6581,28 @@ document.querySelectorAll('#villaStylePicker .vs-grid').forEach(function(grid){
   wirePlanToggle(planSizeToggle,'data-psize',function(val){STATE.planSize=parseInt(val,10);applyPlanAConfig();});
   wirePlanToggle(planConnToggle,'data-pconn',function(val){STATE.planConn=val;applyPlanAConfig();});
 
-  // Sun slider — sync top bar with hidden sidebar slider
+  // Sun slider — sync top bar with hidden sidebar slider (top-bar sun control is optional; guard if removed)
   var topSlider=document.getElementById('topSunSlider');
   var topTime=document.getElementById('topTimeDisplay');
   var topMonth=document.getElementById('topMonthSelect');
   var oldSlider=document.getElementById('timeSlider');
   var oldMonth=document.getElementById('monthSelect');
   function fmtTime(h){var hh=Math.floor(h),mm=Math.round((h-hh)*60);return String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0')}
-  // Initial sync
-  topSlider.value=oldSlider.value;
-  topMonth.value=oldMonth.value;
-  topTime.textContent=fmtTime(parseFloat(topSlider.value));
-  topSlider.addEventListener('input',function(){
-    topTime.textContent=fmtTime(parseFloat(this.value));
-    oldSlider.value=this.value;
-    oldSlider.dispatchEvent(new Event('input'));
-  });
-  topMonth.addEventListener('change',function(){
-    oldMonth.value=this.value;
-    oldMonth.dispatchEvent(new Event('change'));
-  });
+  if(topSlider && topMonth){
+    // Initial sync
+    topSlider.value=oldSlider.value;
+    topMonth.value=oldMonth.value;
+    topTime.textContent=fmtTime(parseFloat(topSlider.value));
+    topSlider.addEventListener('input',function(){
+      topTime.textContent=fmtTime(parseFloat(this.value));
+      oldSlider.value=this.value;
+      oldSlider.dispatchEvent(new Event('input'));
+    });
+    topMonth.addEventListener('change',function(){
+      oldMonth.value=this.value;
+      oldMonth.dispatchEvent(new Event('change'));
+    });
+  }
 
   // 2D/3D toggle
   document.querySelectorAll('#topViewToggle button').forEach(function(b){
