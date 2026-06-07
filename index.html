@@ -2693,7 +2693,7 @@ function ensureGrassMaterial(){
   return grassMaterial;
 }
 function buildLandGrass(){
-  if(grassMesh){threeScene.remove(grassMesh);grassMesh.geometry.dispose();}
+  if(grassMesh){threeScene.remove(grassMesh);grassMesh.geometry.dispose();grassMesh=null;}
   // Parcel polygon bbox for rejection sampling
   let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
   for(const p of parcelM){minX=Math.min(minX,p[0]);maxX=Math.max(maxX,p[0]);minY=Math.min(minY,p[1]);maxY=Math.max(maxY,p[1]);}
@@ -2707,7 +2707,7 @@ function buildLandGrass(){
   for(let i=0;i<count;i++){
     let px,py,tries=0,ok=false;
     // reject points outside the parcel or inside a pool footprint (world z=-py)
-    do{px=minX+rnd()*(maxX-minX);py=minY+rnd()*(maxY-minY);tries++;ok=inPoly(px,py)&&!pointInAnyPool(px,-py,0.45);}while(!ok&&tries<40);
+    do{px=minX+rnd()*(maxX-minX);py=minY+rnd()*(maxY-minY);tries++;ok=inPoly(px,py)&&!pointInAnyPool(px,-py,0.45)&&!pointInAnyApron(px,py);}while(!ok&&tries<40);
     offset[i*3]=px;offset[i*3+1]=gy;offset[i*3+2]=-py;
     orient[i]=rnd()*Math.PI*2;
     const sy=0.55+rnd()*0.9;
@@ -2726,6 +2726,83 @@ function buildLandGrass(){
   grassMesh=new THREE.Mesh(geo,grassMaterial);
   grassMesh.frustumCulled=false;
   threeScene.add(grassMesh);
+}
+
+// === Cobblestone (Arnavut kaldırımı) forecourt — road side only ===
+// For each villa: take its ROAD-FACING edge (the one whose outward normal points toward the
+// nearest gate) and pave a strip from that edge out to the parcel border (the road). Grass stays
+// everywhere else; blades inside the aprons are suppressed via pointInAnyApron().
+var _landCobbleGroup=null, _landCobbleMat=null, _apronPolys=[];   // _apronPolys in parcel-2D coords
+function landCobbleMaterial(){
+  if(_landCobbleMat) return _landCobbleMat;
+  var t=makeCobbleTexture(); t.repeat.set(0.62,0.62);   // ShapeGeometry UV is in metres → ~0.27 m stones
+  _landCobbleMat=new THREE.MeshStandardMaterial({map:t, roughness:0.95, metalness:0.0});
+  return _landCobbleMat;
+}
+function pointInAnyApron(px,py){
+  if(typeof _apronPolys==='undefined'||!_apronPolys.length) return false;
+  for(var i=0;i<_apronPolys.length;i++){ var pg=_apronPolys[i], ins=false;
+    for(var a=0,b=pg.length-1;a<pg.length;b=a++){ var xi=pg[a][0],yi=pg[a][1],xj=pg[b][0],yj=pg[b][1];
+      if(((yi>py)!==(yj>py)) && (px<(xj-xi)*(py-yi)/(yj-yi)+xi)) ins=!ins; }
+    if(ins) return true; }
+  return false;
+}
+// Clip a parcel-2D polygon to the parcel interior (Sutherland–Hodgman against each edge).
+function clipToParcel(poly){
+  var cen=polyCentroid(parcelM), out=poly;
+  for(var i=0;i<parcelM.length;i++){
+    var a=parcelM[i], b=parcelM[(i+1)%parcelM.length];
+    var dx=b[0]-a[0], dy=b[1]-a[1], nx=dy, ny=-dx;            // perpendicular
+    var mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2;
+    if((mx-cen[0])*nx+(my-cen[1])*ny < 0){ nx=-nx; ny=-ny; }  // make it the OUTWARD normal
+    out=clipPolyByLine(out, a[0],a[1], nx,ny);                // keep the inside half-plane
+    if(out.length<3) return out;
+  }
+  return out;
+}
+function buildLandCobble(){
+  if(!threeScene) return;
+  if(_landCobbleGroup){ threeScene.remove(_landCobbleGroup); _landCobbleGroup.traverse(function(o){if(o.geometry)o.geometry.dispose();}); _landCobbleGroup=null; }
+  _apronPolys=[];
+  var gates=STATE.gates||[];
+  if(gates.length && villaFootprints.length){
+    var gpts=[];                                              // gate points, parcel-2D
+    for(var gi=0;gi<gates.length;gi++){ var g=gates[gi], ga=parcelM[g.edge], gb=parcelM[(g.edge+1)%parcelM.length];
+      gpts.push([ga[0]+(gb[0]-ga[0])*g.t, ga[1]+(gb[1]-ga[1])*g.t]); }
+    for(var vi=0; vi<villaFootprints.length; vi++){
+      var wpoly=villaFootprints[vi].poly; if(!wpoly||wpoly.length<3) continue;
+      var vp=[]; for(var k=0;k<wpoly.length;k++) vp.push([wpoly[k][0], -wpoly[k][1]]);   // world[x,z]→parcel[x,y]
+      var cen=polyCentroid(vp);
+      var gp=gpts[0], bd=Infinity;                            // nearest gate to this villa
+      for(var gj=0;gj<gpts.length;gj++){ var dd=Math.hypot(gpts[gj][0]-cen[0],gpts[gj][1]-cen[1]); if(dd<bd){bd=dd;gp=gpts[gj];} }
+      var rdx=gp[0]-cen[0], rdy=gp[1]-cen[1], rl=Math.hypot(rdx,rdy)||1; rdx/=rl; rdy/=rl;   // road direction
+      var bestS=-Infinity, e1=null, e2=null, on=null;          // pick the road-facing edge
+      for(var ei=0;ei<vp.length;ei++){ var pa=vp[ei], pb=vp[(ei+1)%vp.length];
+        var edx=pb[0]-pa[0], edy=pb[1]-pa[1], el=Math.hypot(edx,edy)||1;
+        var nx=edy/el, ny=-edx/el, mx=(pa[0]+pb[0])/2, my=(pa[1]+pb[1])/2;
+        if((mx-cen[0])*nx+(my-cen[1])*ny < 0){ nx=-nx; ny=-ny; }   // outward
+        var s=nx*rdx+ny*rdy;
+        if(s>bestS){ bestS=s; e1=pa; e2=pb; on=[nx,ny]; }
+      }
+      if(!e1) continue;
+      var BIG=80, quad=[ e1.slice(), e2.slice(), [e2[0]+on[0]*BIG,e2[1]+on[1]*BIG], [e1[0]+on[0]*BIG,e1[1]+on[1]*BIG] ];
+      var clipped=clipToParcel(quad);
+      if(clipped.length>=3) _apronPolys.push(clipped);
+    }
+  }
+  if(_apronPolys.length){
+    _landCobbleGroup=new THREE.Group();
+    var mat=landCobbleMaterial();
+    for(var i=0;i<_apronPolys.length;i++){ var pg=_apronPolys[i];
+      var sh=new THREE.Shape(); sh.moveTo(pg[0][0],pg[0][1]);
+      for(var j=1;j<pg.length;j++) sh.lineTo(pg[j][0],pg[j][1]); sh.closePath();
+      var mesh=new THREE.Mesh(new THREE.ShapeGeometry(sh), mat);
+      mesh.rotation.x=-Math.PI/2; mesh.position.y=0.02; mesh.receiveShadow=true;
+      _landCobbleGroup.add(mesh);
+    }
+    threeScene.add(_landCobbleGroup);
+  }
+  if(typeof buildLandGrass==='function') buildLandGrass();   // re-scatter grass, skipping the aprons
 }
 // Carpet a flat roof polygon with the SAME realistic blade grass as the land — a green-roof,
 // so the bare gray slabs of garages / connector wings don't look dry. poly2D is in the same
@@ -5793,6 +5870,7 @@ function buildVillas3D(){
   if(typeof updateSolarTracking==='function') updateSolarTracking();   // aim freshly-built panels (fixed optimum or live tracking)
   updateAreaTable();   // keep the m² table in sync after any 3D rebuild (it shows in 3D too now)
   if(typeof rebuildPerimeterColliders==='function') rebuildPerimeterColliders();   // villa rebuild wiped wallColliders → re-add the solid perimeter
+  if(typeof buildLandCobble==='function') buildLandCobble();   // re-pave the parcel (villa footprints cut out)
 }
 
 // Re-aim every roof PV panel. Tracking ON → dual-axis "face the live sun" (computed from the parcel's
@@ -6260,6 +6338,7 @@ function applyCarEnv(root){
   });
 }
 var teslaTemplate=null, teslaLoading=false, parkedCars=[], drivingCar=null, vehicleGroup=null, inCar=false;
+var parkingGroup=null, parkingPads=[], _cobbleMat=null;   // cobblestone (Arnavut kaldırımı) parking pads
 function loadTeslaCar(){
   if(teslaTemplate||teslaLoading) return;
   if(typeof THREE.GLTFLoader==='undefined') return;
@@ -6323,6 +6402,87 @@ function placeParkedCars(){
   parkedCars.length=0;
   for(var i=0;i<CAR_POSITIONS.length;i++){ var p=CAR_POSITIONS[i]; addCar(p.x, p.z, p.rot); }
   if(typeof updateCarCollider==='function') updateCarCollider();
+}
+
+// ── Arnavut kaldırımı (cobblestone sett) parking ground under the cars ──
+function _rrect(x,X,Y,W,H,R){ x.beginPath(); x.moveTo(X+R,Y); x.arcTo(X+W,Y,X+W,Y+H,R); x.arcTo(X+W,Y+H,X,Y+H,R); x.arcTo(X,Y+H,X,Y,R); x.arcTo(X,Y,X+W,Y,R); x.closePath(); }
+function makeCobbleTexture(){
+  var S=256, c=document.createElement('canvas'); c.width=c.height=S; var x=c.getContext('2d');
+  x.fillStyle='#211e1a'; x.fillRect(0,0,S,S);                 // dark mortar joints
+  var cols=6, rows=6, cw=S/cols, ch=S/rows;
+  for(var r=0;r<rows;r++){
+    var off=(r%2)?cw*0.5:0;                                   // staggered courses
+    for(var ci=-1;ci<=cols;ci++){
+      var sx=ci*cw+off, sy=r*ch, pad=2+Math.random()*1.6;
+      var g=110+Math.floor(Math.random()*80);                // grey granite/basalt 110..190
+      var rr=g+(Math.random()*14-7)|0, gg=g+(Math.random()*8-4)|0, bb=(g-6+Math.random()*8-4)|0;
+      x.save(); x.translate(sx+cw/2, sy+ch/2); x.rotate((Math.random()-0.5)*0.12);
+      var w=cw-pad*2, h=ch-pad*2, rad=Math.min(w,h)*0.22;
+      x.fillStyle='rgb('+rr+','+gg+','+bb+')'; _rrect(x,-w/2,-h/2,w,h,rad); x.fill();
+      x.fillStyle='rgba(255,255,255,0.05)'; _rrect(x,-w/2,-h/2,w,h*0.45,rad); x.fill();   // top sheen
+      x.restore();
+    }
+  }
+  var t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.anisotropy=8; t.needsUpdate=true; return t;
+}
+function cobbleMaterial(){
+  if(_cobbleMat) return _cobbleMat;
+  var t=makeCobbleTexture(); t.repeat.set(6.6/1.6, 3.4/1.6);   // ~0.27 m stones
+  _cobbleMat=new THREE.MeshStandardMaterial({map:t, roughness:0.95, metalness:0.0});
+  return _cobbleMat;
+}
+// Oriented-rectangle test (matches the pads' orientation) — used to suppress grass under the paving.
+function pointInAnyParking(wx,wz){
+  if(typeof parkingPads==='undefined'||!parkingPads.length) return false;
+  for(var i=0;i<parkingPads.length;i++){ var p=parkingPads[i];
+    var dx=wx-p.x, dz=wz-p.z, c=Math.cos(p.ry), s=Math.sin(p.ry);
+    var lx=dx*c-dz*s, lz=dx*s+dz*c;
+    if(Math.abs(lx)<=p.hl && Math.abs(lz)<=p.hw) return true;
+  }
+  return false;
+}
+// World rotation.y that aligns a pad's length with the nearest BUILT villa edge to world (wx,wz).
+// villaFootprints[].poly is world [x,z], populated by buildVillas3D.
+function nearestBuildingEdgeAngle(wx,wz){
+  if(typeof villaFootprints==='undefined'||!villaFootprints.length) return null;
+  var bd=Infinity, ang=null;
+  for(var pi=0;pi<villaFootprints.length;pi++){ var poly=villaFootprints[pi].poly; if(!poly||poly.length<3) continue;
+    for(var i=0;i<poly.length;i++){ var a=poly[i], b=poly[(i+1)%poly.length];
+      var dx=b[0]-a[0], dz=b[1]-a[1], l2=dx*dx+dz*dz; if(l2<1e-6)continue;
+      var t=((wx-a[0])*dx+(wz-a[1])*dz)/l2; t=Math.max(0,Math.min(1,t));
+      var qx=a[0]+t*dx, qz=a[1]+t*dz, d=Math.hypot(wx-qx,wz-qz);
+      if(d<bd){ bd=d; ang=Math.atan2(-dz,dx); }   // rotation.y so local +X ∥ this edge
+    }
+  }
+  return ang;
+}
+// Snap `cur` to the building grid: nearest of base + k·90°.
+function snapToBuilding(cur, base){
+  var best=cur, bd=Infinity;
+  for(var k=0;k<4;k++){ var a=base+k*Math.PI/2, d=Math.abs(Math.atan2(Math.sin(a-cur),Math.cos(a-cur)));
+    if(d<bd){ bd=d; best=a; } }
+  return best;
+}
+function buildParkingPads(){
+  if(!threeScene) return;
+  if(!parkingGroup){ parkingGroup=new THREE.Group(); threeScene.add(parkingGroup); }
+  while(parkingGroup.children.length){ var ch=parkingGroup.children[0]; parkingGroup.remove(ch); if(ch.geometry)ch.geometry.dispose(); }
+  parkingPads.length=0;
+  var PAD_L=6.6, PAD_W=3.4, mat=cobbleMaterial();
+  for(var i=0;i<parkedCars.length;i++){
+    var car=parkedCars[i];
+    // align the pad to the nearest building edge (snapped to whichever axis is closest to the car)
+    var eAng=nearestBuildingEdgeAngle(car.position.x, car.position.z);
+    var padRot=(eAng==null) ? car.rotation.y : snapToBuilding(car.rotation.y, eAng);
+    var padG=new THREE.Group();
+    padG.position.set(car.position.x, 0.03, car.position.z);
+    padG.rotation.y=padRot;
+    var plane=new THREE.Mesh(new THREE.PlaneGeometry(PAD_L,PAD_W), mat);
+    plane.rotation.x=-Math.PI/2; plane.receiveShadow=true;
+    padG.add(plane); parkingGroup.add(padG);
+    parkingPads.push({x:car.position.x, z:car.position.z, ry:padRot, hl:PAD_L/2+0.1, hw:PAD_W/2+0.1});
+  }
+  if(typeof buildLandGrass==='function') buildLandGrass();   // re-scatter grass, now skipping the paved pads
 }
 setTimeout(loadTeslaCar,400);
 
