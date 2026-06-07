@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <!-- EZ-Tree (realistic procedural trees) needs modern three.js as ES modules. It runs ISOLATED
      from the app's global r128: this module generates a tree and exports it to GLB in memory;
      the app then parses that GLB with its own r128 GLTFLoader. The two three.js never share objects. -->
@@ -302,6 +303,13 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 #modeToggle:not(.is-character) .mode-label:nth-child(3){color:#aaa}
 #fpHint{position:absolute;top:90px;right:10px;z-index:25;padding:8px 12px;background:rgba(20,20,20,.78);color:#fff;border-radius:6px;font-size:12px;display:none;box-shadow:0 2px 6px rgba(0,0,0,.3);max-width:320px}
 #areaTable{position:absolute;top:92px;right:10px;z-index:25;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-family:inherit;font-size:11px;color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.08);user-select:none;pointer-events:none;display:none}
+/* Solar generation estimate modal (opened from the m² table button) */
+#solarModal{position:absolute;inset:0;z-index:60;display:none;align-items:center;justify-content:center}
+#solarModal .sm-backdrop{position:absolute;inset:0;background:rgba(20,20,20,.45)}
+#solarModal .sm-card{position:relative;z-index:1;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,.25);padding:22px 26px;width:min(1120px,94vw);max-height:94vh;overflow:auto}
+#solarModal #solarChart{width:100%;height:min(560px,70vh)}
+#solarModal #solarFootnote{font-size:11px;color:#999;line-height:1.5;margin-top:10px}
+#solarModal .sm-close{position:absolute;top:8px;right:11px;border:none;background:none;font-size:17px;color:var(--muted);cursor:pointer;line-height:1}
 /* Sun/hour control — bottom-center overlay on the 3D canvas */
 #canvasSun{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);z-index:22;display:none;align-items:center;gap:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px 14px;box-shadow:0 2px 10px rgba(0,0,0,.12);font-family:inherit}
 #canvasSun .tb-sun-icon{font-size:18px;color:#E69500}
@@ -461,6 +469,8 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
       <input type="range" id="f3TerraceSlider" min="0" max="60" step="5" value="0" aria-label="Bahçe terası %">
       <span id="f3TerraceVal">0%</span>
     </div>
+    <button class="tb-room" id="f3SolarTerBtn" title="Terası optimum açılı güneş paneli yüzeyiyle kapat" style="display:none">☀ Solar Teras</button>
+    <button class="tb-room" id="roofDenseBtn" title="Çatı panelleri: sık dizilim (çatıya hizalı, düşük eğim) — daha çok panel, daha düzgün görünüm">▦ Sık Panel</button>
     <div class="tb-actions">
       <div class="tb-toggle" id="planSizeToggle" title="Villa boyutu (A & B)">
         <button data-psize="70" class="active">70 m²</button>
@@ -582,6 +592,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
   <div id="viewport">
     <svg id="map" viewBox="0 0 600 600"></svg>
     <div id="areaTable"></div>
+    <div id="solarModal"><div class="sm-backdrop" onclick="closeSolarModal()"></div><div class="sm-card"><button class="sm-close" onclick="closeSolarModal()" title="Kapat">✕</button><div id="solarChart"></div><div id="solarFootnote"></div></div></div>
     <canvas id="threeCanvas" style="display:none"></canvas>
     <label id="modeToggle" title="Karakter modunu aç/kapat">
       <span class="mode-label">Normal</span>
@@ -779,6 +790,7 @@ const STATE={
   f3MatchF1:false,     // when 3-storey: false → F3 matches F2 footprint; true → F3 matches F1 (set back)
   f3RoadBalcony:false, // F3=F2 only: carve a fixed road-side strip into an open balcony (AC units)
   f3GardenTerracePct:0,// F3=F2 only: % of the floor's garden→road depth opened as a garden terrace
+  f3SolarTerrace:false,// terrace>0 only: close the garden terrace with a fixed-tilt (optimum) solar canopy
 
   villas:[
     {id:'A',cx:10.0,cy:24.0,angle:0,sides:4,vw:9,vh:8.5,customPoly:null,fill:'var(--lot1v)',stroke:'var(--lot1)',text:'var(--lot1)'},
@@ -836,6 +848,41 @@ function solarOptimumTilt(latDeg){
   return best;
 }
 const SOLAR_OPT_TILT_DEG=solarOptimumTilt(LAT);   // computed once for this parcel
+
+// ─── Solar generation estimate (per-villa, dynamic) ──────────────────────────────────────────────────
+// Standard panel + Antalya's real monthly yield (PVGIS-SARAH3, optimally-tilted, system losses included →
+// kWh delivered per installed kWp, by month). We count the PV modules actually placed on each villa during
+// the 3D build and scale this curve by the installed kWp, derating non-south groups (terrace/veranda) by an
+// annual orientation factor computed from the SAME clear-sky physics as solarOptimumTilt.
+const SOLAR_PANEL_WP=400;                          // standard mono panel rating (≈1.95 m²)
+const SOLAR_MONTHS=['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
+const ANTALYA_KWH_PER_KWP=[92,103,138,152,172,184,196,188,159,131,97,82];   // PVGIS-SARAH3, Antalya, opt. tilt
+// Annual in-plane beam energy (clear-sky, Meinel) for an arbitrary tilt β / azimuth γ (0°=south, +west).
+function solarAnnualPOA(latDeg,betaDeg,gammaDeg){
+  var phi=latDeg*Math.PI/180, beta=betaDeg*Math.PI/180, gam=gammaDeg*Math.PI/180, sum=0;
+  for(var doy=1;doy<=365;doy+=3){
+    var decl=23.45*Math.sin(2*Math.PI*(284+doy)/365)*Math.PI/180;
+    for(var hd=-90;hd<=90;hd+=5){
+      var ha=hd*Math.PI/180;
+      var sinEl=Math.sin(phi)*Math.sin(decl)+Math.cos(phi)*Math.cos(decl)*Math.cos(ha);
+      if(sinEl<=0.02) continue;
+      var cosInc=Math.sin(decl)*Math.sin(phi)*Math.cos(beta)
+                -Math.sin(decl)*Math.cos(phi)*Math.sin(beta)*Math.cos(gam)
+                +Math.cos(decl)*Math.cos(phi)*Math.cos(beta)*Math.cos(ha)
+                +Math.cos(decl)*Math.sin(phi)*Math.sin(beta)*Math.cos(gam)*Math.cos(ha)
+                +Math.cos(decl)*Math.sin(beta)*Math.sin(gam)*Math.sin(ha);
+      if(cosInc<=0) continue;
+      var AM=1/sinEl;
+      sum+=Math.pow(0.7,Math.pow(AM,0.678))*cosInc;
+    }
+  }
+  return sum;
+}
+const SOLAR_REF_POA=solarAnnualPOA(LAT,SOLAR_OPT_TILT_DEG,0);          // optimal south reference (factor = 1.0)
+function solarOrientFactor(betaDeg,gammaDeg){ return SOLAR_REF_POA>0?solarAnnualPOA(LAT,betaDeg,gammaDeg)/SOLAR_REF_POA:1; }
+const SOLAR_FLAT_FACTOR=solarOrientFactor(0,0);                        // horizontal cap modules
+var villaSolar={};                                                     // key → {panels, eff=Σ panels×orientationFactor}
+function solarTally(key,n,factor){ n=n||0; if(!key||n<=0)return; if(!villaSolar[key])villaSolar[key]={panels:0,eff:0}; villaSolar[key].panels+=n; villaSolar[key].eff+=n*(factor==null?1:factor); }
 const pad=65,svgW=600,svgH=600,sc=10.24;
 function S(x,y){return[pad+x*sc,svgH-pad-y*sc]}
 function M(sx,sy){return[(sx-pad)/sc,(svgH-pad-sy)/sc]}
@@ -857,6 +904,10 @@ function clipPolyByLine(poly,px,py,nx,ny){
     if((dc<=0)!==(dn<=0)){const t=dc/(dc-dn);out.push([cur[0]+t*(nxt[0]-cur[0]),cur[1]+t*(nxt[1]-cur[1])])}
   }return out;
 }
+// Drop consecutive coincident vertices. clipPolyByLine duplicates a vertex when the clip line passes exactly
+// through it (e.g. the road balcony's 1.5m clip lands on A/B's cantilever corners, since F3_ROAD_BALC_D==CANT_D).
+// Those zero-length edges otherwise survive f3PolyEdges' `hypot||1` as phantom len=1 rails sticking out of corners.
+function cleanPoly(poly,eps){eps=eps||1e-4;var out=[];for(var i=0;i<poly.length;i++){var p=poly[i],q=poly[(i+1)%poly.length];if(Math.hypot(p[0]-q[0],p[1]-q[1])>eps)out.push(p);}return out;}
 function polyArea(p){let a=0;for(let i=0;i<p.length;i++){const j=(i+1)%p.length;a+=p[i][0]*p[j][1]-p[j][0]*p[i][1]}return Math.abs(a)/2}
 function polyCentroid(p){let x=0,y=0;for(const q of p){x+=q[0];y+=q[1]}return[x/p.length,y/p.length]}
 function rotCorners(cx,cy,w,h,a){const hw=w/2,hh=h/2,c=Math.cos(a),s=Math.sin(a);return[[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]].map(([dx,dy])=>[cx+dx*c-dy*s,cy+dx*s+dy*c])}
@@ -1399,7 +1450,7 @@ function f3PolyEdges(poly){
 function f3CarveEdge(poly, e, depth){
   if(depth<=0.05) return {enclosed:poly, strip:[]};
   var ix=(e.ax+e.bx)/2 - e.nx*depth, iy=(e.ay+e.by)/2 - e.ny*depth;
-  return {enclosed:clipPolyByLine(poly, ix, iy, e.nx, e.ny), strip:clipPolyByLine(poly, ix, iy, -e.nx, -e.ny)};
+  return {enclosed:cleanPoly(clipPolyByLine(poly, ix, iy, e.nx, e.ny)), strip:cleanPoly(clipPolyByLine(poly, ix, iy, -e.nx, -e.ny))};
 }
 // Apply the active road/garden carves to an F3 footprint. → {enclosed, strips:[{poly,kind}], roadIdx, gardenIdx}.
 function f3CarvePoly(poly, edges){
@@ -1466,8 +1517,81 @@ function updateAreaTable(){
   if(rows.some(r=>r.f3open>0))h+='<br>F3 açık alan (balkon/teras): '+rows.reduce((s,r)=>s+(r.f3open||0),0).toFixed(0)+' m²';
   if(rows.some(r=>r.garage>0))h+='<br>Garaj (ayrı): '+rows.reduce((s,r)=>s+r.garage,0).toFixed(0)+' m²';
   h+='</div>';
+  var totPan=(villaSolar.A?villaSolar.A.panels:0)+(villaSolar.B?villaSolar.B.panels:0)+(villaSolar.C?villaSolar.C.panels:0);
+  if(totPan>0) h+='<button id="solarEstBtn" onclick="openSolarModal()" style="pointer-events:auto;margin-top:6px;width:100%;padding:5px 8px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer">☀ Solar üretim tahmini ('+totPan+' panel)</button>';
   el.innerHTML=h;
+  if(solarModalOpen) solarRefresh();   // live refresh while the chart is open
 }
+// ─── Solar generation estimate: per-villa monthly kWh from the live panel count × Antalya's yield curve ───
+function computeSolarMonthly(){
+  var keys=['A','B','C'], per={}, total=new Array(12).fill(0), panels={}, eff={}, annual=0;
+  keys.forEach(function(k){
+    var vs=villaSolar[k]||{panels:0,eff:0};
+    panels[k]=vs.panels; eff[k]=vs.eff;
+    var kwp=vs.eff*SOLAR_PANEL_WP/1000;
+    var arr=ANTALYA_KWH_PER_KWP.map(function(y){return kwp*y;});
+    per[k]=arr; for(var m=0;m<12;m++) total[m]+=arr[m];
+  });
+  for(var m=0;m<12;m++) annual+=total[m];
+  return {per:per, total:total, panels:panels, annual:annual, totalPanels:(panels.A||0)+(panels.B||0)+(panels.C||0)};
+}
+// Household electricity consumption — ANTALYA-SPECIFIC: the hottest Turkish city (highest cooling-degree-days,
+// ~4300), so cooling dominates and the Jul/Aug spike is pronounced. Monthly kWh per m² of floor area; gas
+// cooking & most winter heating excluded. Annual ≈ 48 kWh/m²/yr — the electricity share of an Antalya villa's
+// ~77 kWh/m²/yr total energy use (nZEB case study), well above the generic-Turkey figure.
+const CONS_KWH_PER_M2=[3.2,3.0,2.6,2.5,3.2,5.0,7.2,7.4,5.3,3.2,2.7,3.1];
+const ELEC_PRICE_TL=3.5;   // ₺/kWh — blended residential 2025-26 (incl. tier-2 / distribution / taxes)
+function villaAreaMap(){ var r=(typeof villaFloorAreas==='function')?villaFloorAreas():null; var m={A:0,B:0,C:0}; if(r)r.forEach(function(x){m[x.key]=x.total;}); return m; }
+function computeConsumptionMonthly(){
+  var area=villaAreaMap(), keys=['A','B','C'], per={}, total=new Array(12).fill(0), annual=0;
+  keys.forEach(function(k){ var a=area[k]||0, arr=CONS_KWH_PER_M2.map(function(c){return a*c;}); per[k]=arr; for(var m=0;m<12;m++) total[m]+=arr[m]; });
+  for(var m=0;m<12;m++) annual+=total[m];
+  return {per:per, total:total, annual:annual, area:area};
+}
+// ECharts option: grouped generation bars (one per villa) + per-villa consumption lines.
+function solarChartOption(){
+  var gen=computeSolarMonthly(), cons=computeConsumptionMonthly(), keys=['A','B','C'], cols=['#D85A30','#185FA5','#534AB7'];
+  var series=[];
+  keys.forEach(function(k,i){ series.push({ name:'Villa '+k+' üretim', type:'bar', emphasis:{focus:'series'},
+    itemStyle:{color:cols[i],borderRadius:[2,2,0,0]}, data:gen.per[k].map(function(v){return Math.round(v);}) }); });
+  var consSym=['circle','triangle','rect'], CONS_COL='#F5B301';   // single contrasting yellow for all consumption lines
+  keys.forEach(function(k,i){ series.push({ name:'Villa '+k+' tüketim', type:'line', smooth:true, symbol:consSym[i], symbolSize:7,
+    z:5, lineStyle:{color:CONS_COL,width:2.8,type:'dashed'}, itemStyle:{color:CONS_COL,borderColor:'#fff',borderWidth:1}, data:cons.per[k].map(function(v){return Math.round(v);}) }); });
+  var consCost=cons.annual*ELEC_PRICE_TL, genVal=Math.min(gen.annual,cons.annual)*ELEC_PRICE_TL, surplus=Math.max(0,gen.annual-cons.annual);
+  var tl=function(n){return Math.round(n).toLocaleString('tr-TR');};
+  return {
+    title:{ text:'Üretim ≈ '+tl(gen.annual)+' kWh/yıl  ·  Tüketim ≈ '+tl(cons.annual)+' kWh/yıl',
+      subtext:gen.totalPanels+' panel × '+SOLAR_PANEL_WP+' Wp · fatura ≈ ₺'+tl(consCost)+'/yıl · güneşle tasarruf ≈ ₺'+tl(genVal)+'/yıl'+(surplus>0?' (+'+tl(surplus)+' kWh fazla)':''),
+      left:'center', textStyle:{fontSize:16,fontWeight:700,color:'#222'}, subtextStyle:{fontSize:11.5,color:'#777'} },
+    tooltip:{ trigger:'axis', axisPointer:{type:'shadow'},
+      valueFormatter:function(v){return tl(v)+' kWh';} },
+    legend:{ bottom:0, itemWidth:14, itemHeight:10, textStyle:{fontSize:11.5}, type:'scroll' },
+    grid:{ left:64, right:28, top:78, bottom:60 },
+    xAxis:{ type:'category', data:SOLAR_MONTHS, axisTick:{alignWithLabel:true}, axisLabel:{fontSize:12,color:'#666'} },
+    yAxis:{ type:'value', name:'kWh / ay', nameTextStyle:{color:'#999',fontSize:11}, axisLabel:{color:'#999'},
+      splitLine:{lineStyle:{color:'#ececec'}} },
+    series:series
+  };
+}
+function solarFootnoteHTML(){
+  return '<b>Üretim</b> (sütun): '+SOLAR_PANEL_WP+' Wp panel; aylık verim PVGIS-SARAH3 Antalya (optimum eğim, sistem '+
+    'kayıpları dahil). Çatı panelleri güneye optimum; teras/veranda panelleri bahçe yönüne göre düşürülür. '+
+    '<b>Tüketim</b> (kesik çizgi): ev alanı (F1+F2+F3) × Antalya aylık elektrik yoğunluğu (≈48 kWh/m²·yıl) — '+
+    'Türkiye’nin en yüksek soğutma talebi (Tem/Ağu zirve), kış ısıtması az, pişirme doğalgaz hariç. Tarife ≈ ₺'+ELEC_PRICE_TL.toFixed(2)+
+    '/kWh (mesken, 2025-26). Tüm değerler tahmindir; hava, gölge, kullanım ve fiyata göre değişir.';
+}
+var solarModalOpen=false, solarChartInst=null;
+function solarRefresh(){ if(solarChartInst){ solarChartInst.setOption(solarChartOption()); } var f=document.getElementById('solarFootnote'); if(f)f.innerHTML=solarFootnoteHTML(); }
+function openSolarModal(){
+  var m=document.getElementById('solarModal'); if(!m)return;
+  m.style.display='flex'; solarModalOpen=true;
+  if(typeof echarts==='undefined'){ var el=document.getElementById('solarChart'); if(el)el.innerHTML='<div style="padding:24px;text-align:center;color:#999">Grafik kütüphanesi (ECharts) yüklenemedi — internet bağlantısı gerekir.</div>'; return; }
+  if(!solarChartInst){ solarChartInst=echarts.init(document.getElementById('solarChart')); }
+  solarChartInst.resize();   // container now has its real size (modal is visible)
+  solarRefresh();
+}
+function closeSolarModal(){var m=document.getElementById('solarModal'); if(m)m.style.display='none'; solarModalOpen=false;}
+window.addEventListener('resize',function(){ if(solarModalOpen&&solarChartInst) solarChartInst.resize(); });
 
 // ═══════════════════════════════════════
 // DRAG & DROP
@@ -2108,9 +2232,10 @@ function renderRoomEditor(){
   if(STATE.roomEdit.floor==='f3' && villaF2Poly[v.key] && villaF2Poly[v.key].length>=3){
     var f3cb=villaF2Poly[v.key], f3cv=f3CarvePoly(f3cb, f3PolyEdges(f3cb));
     for(var csi=0;csi<f3cv.strips.length;csi++){var cst=f3cv.strips[csi]; if(!cst.poly||cst.poly.length<3)continue;
-      out+='<polygon points="'+ps(cst.poly)+'" fill="rgba(2,136,209,0.12)" stroke="#0288D1" stroke-width="1.4" stroke-dasharray="5,3"/>';
+      var solT=(cst.kind==='garden'&&STATE.f3SolarTerrace);
+      out+='<polygon points="'+ps(cst.poly)+'" fill="'+(solT?'rgba(230,149,0,0.16)':'rgba(2,136,209,0.12)')+'" stroke="'+(solT?'#E69500':'#0288D1')+'" stroke-width="1.4" stroke-dasharray="5,3"/>';
       var ctc=polyCentroid(cst.poly), ctp=S(ctc[0],ctc[1]);
-      out+='<text x="'+ctp[0].toFixed(1)+'" y="'+(ctp[1]+2).toFixed(1)+'" text-anchor="middle" font-size="7" font-weight="700" fill="#0277BD" pointer-events="none">'+(cst.kind==='road'?'BALKON':'TERAS')+'</text>';
+      out+='<text x="'+ctp[0].toFixed(1)+'" y="'+(ctp[1]+2).toFixed(1)+'" text-anchor="middle" font-size="7" font-weight="700" fill="'+(solT?'#B36B00':'#0277BD')+'" pointer-events="none">'+(cst.kind==='road'?'BALKON':(solT?'SOLAR TERAS':'TERAS'))+'</text>';
     }
   }
   // walls
@@ -2327,6 +2452,10 @@ function syncF3Controls(){
   var tSl=document.getElementById('f3TerraceSlider'), tVal=document.getElementById('f3TerraceVal');
   if(tSl)tSl.value=STATE.f3GardenTerracePct||0;
   if(tVal)tVal.textContent=(STATE.f3GardenTerracePct||0)+'%';
+  // Solar terrace canopy — only meaningful when F3=F2 AND there's a terrace (slider > 0).
+  var solOk=mod && (STATE.f3GardenTerracePct||0)>0;
+  var stBtn=document.getElementById('f3SolarTerBtn');
+  if(stBtn){ stBtn.style.display=d; stBtn.classList.toggle('tb-disabled',!solOk); stBtn.classList.toggle('active',solOk&&!!STATE.f3SolarTerrace); }
 }
 document.querySelectorAll('#storeyToggle button').forEach(function(b){b.addEventListener('click',function(){
   STATE.threeStorey=(this.dataset.storeys==='3');
@@ -2353,7 +2482,13 @@ var _f3rb=document.getElementById('f3RoadBalcBtn');
 if(_f3rb)_f3rb.addEventListener('click',function(){ STATE.f3RoadBalcony=!STATE.f3RoadBalcony; this.classList.toggle('active',STATE.f3RoadBalcony); if(threeInited)buildVillas3D(); renderFull(); });
 // F3 garden terrace depth slider (top bar) — % of the floor's garden→road depth
 var _f3ts=document.getElementById('f3TerraceSlider');
-if(_f3ts)_f3ts.addEventListener('input',function(){ STATE.f3GardenTerracePct=parseInt(this.value)||0; var lbl=document.getElementById('f3TerraceVal'); if(lbl)lbl.textContent=this.value+'%'; if(threeInited)buildVillas3D(); renderFull(); });
+if(_f3ts)_f3ts.addEventListener('input',function(){ STATE.f3GardenTerracePct=parseInt(this.value)||0; var lbl=document.getElementById('f3TerraceVal'); if(lbl)lbl.textContent=this.value+'%'; syncF3Controls(); if(threeInited)buildVillas3D(); renderFull(); });
+// F3 solar terrace canopy toggle (top bar) — fixed optimum-tilt PV plane closing the terrace
+var _f3st=document.getElementById('f3SolarTerBtn');
+if(_f3st)_f3st.addEventListener('click',function(){ if((STATE.f3GardenTerracePct||0)<=0||STATE.f3MatchF1)return; STATE.f3SolarTerrace=!STATE.f3SolarTerrace; this.classList.toggle('active',STATE.f3SolarTerrace); if(threeInited)buildVillas3D(); renderFull(); });
+// Roof PV layout: optimal tilted-south rows (default) ↔ dense roof-aligned low-tilt grid
+var _rdb=document.getElementById('roofDenseBtn');
+if(_rdb)_rdb.addEventListener('click',function(){ STATE.roofSolarDense=!STATE.roofSolarDense; this.classList.toggle('active',STATE.roofSolarDense); if(threeInited)buildVillas3D(); renderFull(); });
 // Dir select
 document.getElementById('dirSelect').addEventListener('change',function(){STATE.divDir=this.value;STATE.pOptimalAngle=null;pRecalcAll()});
 // Villa size (now controlled by canvas resize handles, no sidebar inputs)
@@ -2753,10 +2888,53 @@ function scatterRoofSolar(poly2D, roofTopY, group, avoidPolys){
       ped.position.set(wx, roofTopY+hgt/2, ez); ped.castShadow=true; group.add(ped);
     }
     solarPanels.push({holder:holder, tg:tg, tilt:tilt});   // registered for live sun-tracking
+    placed++;
   }
+  var placed=0;
   for(var wz=minZ+inset+projDepth/2; wz<=maxZ-inset-projDepth/2; wz+=rowPitch)
     for(var wx=minX+inset+pw/2; wx<=maxX-inset-pw/2; wx+=pw+gapX)
       place(wx,wz);
+  return placed;   // panel count for the generation estimate
+}
+// DENSE roof PV: instead of the energy-optimal tilted-south spaced rows, tile panels as a tight roof-ALIGNED
+// grid at a low tilt (~12°) toward the roof's most-southerly edge. Each panel yields a bit less, but far more
+// fit (no anti-shading gaps, no corner waste) → cleaner look + comparable/higher total. Fixed tilt (not
+// sun-tracked). Returns {n, factor} (factor = annual orientation factor vs the optimal, for the kWh estimate).
+function scatterRoofSolarDense(poly2D, roofTopY, group, avoidPolys){
+  if(!poly2D || poly2D.length<3) return {n:0, factor:1};
+  function inPoly(poly,x,y){var ins=false,M=poly.length;for(var p=0,q=M-1;p<M;q=p++){var xi=poly[p][0],yi=poly[p][1],xj=poly[q][0],yj=poly[q][1];if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))ins=!ins;}return ins;}
+  var n=poly2D.length, cent=[0,0]; for(var i=0;i<n;i++){cent[0]+=poly2D[i][0];cent[1]+=poly2D[i][1];} cent[0]/=n; cent[1]/=n;
+  // Row axis u = the roof edge whose outward normal points MOST south (world +Z = −y2D); tilt toward that normal v.
+  var edges=f3PolyEdges(poly2D), be=null, best=-Infinity;
+  for(var i=0;i<n;i++){ var sc=-edges[i].ny; if(sc>best){best=sc;be=edges[i];} }
+  if(!be) return {n:0, factor:1};
+  var ux=be.ux, uy=be.uy, vx=be.nx, vy=be.ny;
+  var tmpl=buildSolarModule(), dims=tmpl.userData.dims, pw=dims[0], pl=dims[1];
+  var tiltDeg=12, tilt=tiltDeg*Math.PI/180, projV=pl*Math.cos(tilt);
+  var gapU=0.04, gapV=0.10, margin=0.45;
+  var slopeSign=(uy*vx - ux*vy)>0?1:-1, rowYaw=Math.atan2(uy,ux), standH=(pl/2)*Math.sin(tilt)+0.06;
+  var minU=Infinity,maxU=-Infinity,minV=Infinity,maxV=-Infinity;
+  for(var i=0;i<n;i++){var dx=poly2D[i][0]-cent[0], dy=poly2D[i][1]-cent[1], u=dx*ux+dy*uy, v=dx*vx+dy*vy; if(u<minU)minU=u;if(u>maxU)maxU=u;if(v<minV)minV=v;if(v>maxV)maxV=v;}
+  var placed=0;
+  for(var v=minV+margin+projV/2; v<=maxV-margin-projV/2; v+=projV+gapV){
+    for(var u=minU+margin+pw/2; u<=maxU-margin-pw/2; u+=pw+gapU){
+      var ok=true;
+      for(var su=-1;su<=1&&ok;su+=2) for(var sv=-1;sv<=1&&ok;sv+=2){
+        var cu=u+su*(pw/2), cv=v+sv*(projV/2), wx=cent[0]+cu*ux+cv*vx, wy=cent[1]+cu*uy+cv*vy;
+        if(!inPoly(poly2D,wx,wy)){ok=false;break;}
+        if(avoidPolys){for(var ai=0;ai<avoidPolys.length;ai++){if(inPoly(avoidPolys[ai],wx,wy)){ok=false;break;}}}
+      }
+      if(!ok) continue;
+      var wcx=cent[0]+u*ux+v*vx, wcy=cent[1]+u*uy+v*vy;
+      var holder=new THREE.Group();
+      holder.position.set(wcx, roofTopY+standH, -wcy);
+      holder.rotation.order='YXZ'; holder.rotation.y=rowYaw; holder.rotation.x=slopeSign*tilt;
+      holder.add(tmpl.clone(true)); group.add(holder);
+      placed++;
+    }
+  }
+  var azDeg=Math.atan2(vx, -vy)*180/Math.PI;   // tilt-direction azimuth vs true south, for the yield factor
+  return {n:placed, factor:solarOrientFactor(tiltDeg, azDeg)};
 }
 // Lay solar modules FLAT and flush over a horizontal rectangular cap (e.g. the rooftop stair-house roof —
 // the highest slab of the structure). Same embedded style as the veranda shade: no tilt, no pedestals — the
@@ -2777,9 +2955,9 @@ function embedFlatSolar(poly2D, topY, group){
   var rot=(fit(la,pl)*fit(lb,pw))>(fit(la,pw)*fit(lb,pl));
   var dimA=rot?pl:pw, dimB=rot?pw:pl;
   var nA=fit(la,dimA), nB=fit(lb,dimB);
-  if(nA<1||nB<1) return;
+  if(nA<1||nB<1) return 0;
   var base=Math.atan2(uay,uax), yaw=rot?base+Math.PI/2:base;   // module local +X → edge A (world Z = −y2D)
-  var gridA=nA*dimA+(nA-1)*gap, gridB=nB*dimB+(nB-1)*gap;
+  var gridA=nA*dimA+(nA-1)*gap, gridB=nB*dimB+(nB-1)*gap, placed=0;
   for(var ia=0;ia<nA;ia++) for(var ib=0;ib<nB;ib++){
     var da=-gridA/2+dimA/2+ia*(dimA+gap), db=-gridB/2+dimB/2+ib*(dimB+gap);
     var wx2=cx+da*uax+db*ubx, wy2=cy+da*uay+db*uby;     // world-2D centre of this module
@@ -2788,7 +2966,9 @@ function embedFlatSolar(poly2D, topY, group){
     mod.position.set(wx2, topY+0.02, -wy2);             // flush, tiny air gap above the slab
     mod.rotation.y=yaw;
     group.add(mod);
+    placed++;
   }
+  return placed;   // panel count for the generation estimate
 }
 function resizeThreeRenderer(){if(!threeRenderer)return;const vp=document.getElementById('viewport');const w=vp.clientWidth,h=vp.clientHeight;threeRenderer.setSize(w,h);if(threeCamera){threeCamera.aspect=w/h;threeCamera.updateProjectionMatrix()}}
 window.addEventListener('resize',()=>{if(threeInited&&STATE.view==='3d')resizeThreeRenderer()});
@@ -4284,20 +4464,77 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     }
     // F3 modifier strips (road balcony / garden terrace): open-air decks on the F2 ceiling slab. Tile the deck
     // and railing the OPEN edges (the inner edge backs onto the enclosed F3 wall built above, which has the door).
+    var stGA=f3GardenAxis(polyCentroid(f3FullPoly)), stGnx=stGA[0], stGny=stGA[1];   // garden direction (toward garden)
     for(var sIdx=0;sIdx<f3Strips.length;sIdx++){
       var sp=f3Strips[sIdx].poly; if(!sp||sp.length<3) continue;
+      var spSolar=(STATE.f3SolarTerrace && f3Strips[sIdx].kind==='garden');   // close this terrace with a PV canopy?
       buildTileSurface(sp, null, f3base);   // deck floor (rooftop ceramic), flush with the F3 floor line
       var spEdges=f3PolyEdges(sp);
+      // garden-most edge (max projection along the garden axis) — its railing is dropped when the PV plane closes it
+      var spOuterEi=-1, spOuterPr=-Infinity;
+      for(var seo=0;seo<spEdges.length;seo++){var beo=spEdges[seo]; var prj=((beo.ax+beo.bx)/2)*stGnx+((beo.ay+beo.by)/2)*stGny; if(prj>spOuterPr){spOuterPr=prj;spOuterEi=seo;}}
       for(var se=0;se<spEdges.length;se++){
         var be=spEdges[se]; if(be.len<0.4) continue;
-        var imx=(be.ax+be.bx)/2-be.nx*0.3, imy=(be.ay+be.by)/2-be.ny*0.3;
-        if(pip(imx,imy,f3Poly)) continue;   // inner edge → backs onto the enclosed interior, no railing
+        var imx=(be.ax+be.bx)/2+be.nx*0.3, imy=(be.ay+be.by)/2+be.ny*0.3;
+        if(pip(imx,imy,f3Poly)) continue;   // inner edge → backs onto the enclosed interior, no railing (probe across the outward normal into f3Poly)
+        if(spSolar && se===spOuterEi) continue;   // garden edge is closed by the PV plane → no railing there
         var bpc=Math.max(2,Math.round(be.len/1.5));
         for(var bpi=0;bpi<=bpc;bpi++){var bpt=bpi/bpc, bpx=be.ax+bpt*be.dx, bpz=be.ay+bpt*be.dy; var bpost=new THREE.Mesh(new THREE.BoxGeometry(railTh,railH,railTh),matRailing); bpost.position.set(bpx,f3base+railH/2,-bpz); g.add(bpost);}
         var smx=(be.ax+be.bx)/2, smy=(be.ay+be.by)/2;
         var stR=new THREE.Mesh(new THREE.BoxGeometry(be.len,railTh,railTh),matRailing); stR.position.set(smx,f3base+railH,-smy); stR.rotation.y=be.angle; g.add(stR);
         var smR=new THREE.Mesh(new THREE.BoxGeometry(be.len,railTh,railTh),matRailing); smR.position.set(smx,f3base+railH*0.5,-smy); smR.rotation.y=be.angle; g.add(smR);
         wallColliders.push({ax:be.ax,az:-be.ay,bx:be.bx,bz:-be.by,active:true,floor:'balcRail',yLow:SUB_H+f3base,yHigh:SUB_H+f3base+railH});
+      }
+      // === Solar terrace canopy: ONE fixed-tilt (site optimum) PV plane closing the garden terrace ===
+      // Top edge pinned at the rooftop level (roofBaseY) on the enclosed F3 garden wall; descends at the optimum
+      // tilt over the terrace, carried by auto-height rods at the low edge. Rods vanish when the plane (at the
+      // fixed angle) lands exactly on the terrace floor; for terraces deeper than that, the plane is clamped to
+      // the floor (it just covers the inner part). The PANEL ANGLE never changes with the slider — only its reach.
+      if(spSolar){
+        // enclosed F3 garden edge (outward normal toward garden) = high anchor, same role as the veranda's edge
+        var geE=null, geBest=-Infinity;
+        for(var gi=0;gi<f3Edges.length;gi++){var fe=f3Edges[gi]; var dn=fe.nx*stGnx+fe.ny*stGny; if(dn>geBest){geBest=dn;geE=fe;}}
+        var tmn=Infinity,tmx=-Infinity; for(var pvi=0;pvi<sp.length;pvi++){var prv=sp[pvi][0]*stGnx+sp[pvi][1]*stGny; if(prv<tmn)tmn=prv; if(prv>tmx)tmx=prv;}
+        var stD=tmx-tmn;   // terrace depth along the garden axis
+        if(geE && stD>0.3){
+          var stTheta=SOLAR_OPT_TILT_DEG*Math.PI/180, stTan=Math.tan(stTheta), stCos=Math.cos(stTheta);
+          var stDcov=Math.min(stD, (roofBaseY-f3base)/stTan);   // clamp so the plane never dives below the floor
+          var stHout=roofBaseY-stTan*stDcov;                    // low-edge height
+          var stPlaneLen=stDcov/stCos;                          // tilted surface length (hypotenuse)
+          var stZsign=(geE.uy*geE.nx-geE.ux*geE.ny);            // winding-safe slope sense (the veranda's trick)
+          var stSlope=(stZsign>0?1:-1)*stTheta;
+          // Width = the SHORT garden edge. On Villa C (pentagon) the terrace is a trapezoid whose inner
+          // (roof-level) edge is wider than the small F3-footprint garden edge; clamp to the smaller so the
+          // PV plane never overhangs the irregular shape. On A/B (rectangles) both edges match → no change.
+          var stOE=(spOuterEi>=0&&spEdges[spOuterEi])?spEdges[spOuterEi]:null;
+          var stOuterLen=stOE?stOE.len:geE.len;
+          var geMx=(geE.ax+geE.bx)/2, geMy=(geE.ay+geE.by)/2, stAng=Math.atan2(geE.dy,geE.dx), stW=Math.min(geE.len,stOuterLen);
+          // The inner (clip) edge and the small outer edge are parallel but, on a skewed trapezoid, their
+          // midpoints are offset ALONG the edge. Center the panel on the terrace centerline (inner-mid→outer-mid)
+          // so it doesn't sit off to one side. stLat = that along-edge skew; stDepthN = true normal depth.
+          var stLat=0, stDepthN=stD;
+          if(stOE){var oMx=(stOE.ax+stOE.bx)/2, oMy=(stOE.ay+stOE.by)/2, dvx=oMx-geMx, dvy=oMy-geMy; stLat=dvx*geE.ux+dvy*geE.uy; stDepthN=Math.abs(dvx*geE.nx+dvy*geE.ny)||stD;}
+          var stLatHalf=stLat*(stDcov/2)/stDepthN;
+          var stCx=geMx+geE.nx*(stDcov/2)+geE.ux*stLatHalf, stCy=geMy+geE.ny*(stDcov/2)+geE.uy*stLatHalf, stMidH=(roofBaseY+stHout)/2, ST_THK=0.10;
+          var stSub=new THREE.Mesh(new THREE.BoxGeometry(stW,ST_THK,stPlaneLen),matWoodDark);
+          stSub.position.set(stCx,stMidH,-stCy); stSub.rotation.order='YXZ'; stSub.rotation.y=stAng; stSub.rotation.x=stSlope; stSub.castShadow=true; stSub.receiveShadow=true; g.add(stSub);
+          // embedded PV modules tiled edge-to-edge (continuous "solid" surface), sharing the plane transform
+          var stT=buildSolarModule(), stDm=stT.userData.dims, stpw=stDm[0], stpl=stDm[1];
+          var stHld=new THREE.Group(); stHld.position.set(stCx,stMidH,-stCy); stHld.rotation.order='YXZ'; stHld.rotation.y=stAng; stHld.rotation.x=stSlope;
+          var stYo=ST_THK/2+0.02, stGap=0.012, stMar=0.06, stUW=stW-2*stMar, stUD=stPlaneLen-2*stMar;
+          var stCols=Math.max(1,Math.floor((stUW+stGap)/(stpw+stGap))), stRows=Math.max(1,Math.floor((stUD+stGap)/(stpl+stGap)));
+          var stGW=stCols*stpw+(stCols-1)*stGap, stGD=stRows*stpl+(stRows-1)*stGap;
+          for(var cc=0;cc<stCols;cc++)for(var rr=0;rr<stRows;rr++){var mlx=-stGW/2+stpw/2+cc*(stpw+stGap), mlz=-stGD/2+stpl/2+rr*(stpl+stGap); var mmd=stT.clone(true); mmd.position.set(mlx,stYo,mlz); stHld.add(mmd);}
+          g.add(stHld);
+          solarTally(villaKey, stCols*stRows, solarOrientFactor(SOLAR_OPT_TILT_DEG, Math.atan2(geE.nx,-geE.ny)*180/Math.PI));   // terrace canopy: 32° toward garden
+          // auto-height support rods at the low (garden) corners — height = low-edge above floor; gone when it lands on the floor
+          var stRodH=stHout-f3base;
+          if(stRodH>0.10){
+            var stLatCov=stLat*stDcov/stDepthN;
+            var stOx=geMx+geE.nx*stDcov+geE.ux*stLatCov, stOy=geMy+geE.ny*stDcov+geE.uy*stLatCov;
+            for(var rsi=-1;rsi<=1;rsi+=2){var rx=stOx+rsi*(stW/2-0.12)*geE.ux, ry=stOy+rsi*(stW/2-0.12)*geE.uy; var rod=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,stRodH,12),matRailing); rod.position.set(rx,f3base+stRodH/2,-ry); rod.castShadow=true; g.add(rod);}
+          }
+        }
       }
     }
   }
@@ -4380,7 +4617,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       mvPolySlab(Lpoly, twBottom+twH, 0.18, matConcrete);   // tower roof cap
       // Embedded PV on the stair-house cap — the highest roof of the whole structure. Flush flat modules,
       // same embedded style as the veranda shade (no tilt/pedestals).
-      if(STATE.roofSolar) embedFlatSolar(Lpoly, twBottom+twH+0.18, g);
+      if(STATE.roofSolar) solarTally(villaKey, embedFlatSolar(Lpoly, twBottom+twH+0.18, g), SOLAR_FLAT_FACTOR);
       return;
     }
 
@@ -4503,7 +4740,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
       mvPolySlab(c, twBottom+twH, 0.18, matConcrete);
       // Embedded PV on the stair-house cap — the highest roof of the whole structure. Flush flat modules,
       // same embedded style as the veranda shade (no tilt/pedestals).
-      if(STATE.roofSolar) embedFlatSolar(c, twBottom+twH+0.18, g);
+      if(STATE.roofSolar) solarTally(villaKey, embedFlatSolar(c, twBottom+twH+0.18, g), SOLAR_FLAT_FACTOR);
     }
   })();
 
@@ -4538,7 +4775,10 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     var roofAvoid=(stairHolePoly2D?[stairHolePoly2D]:[]).concat(f3OpenHoles);   // keep grass/çalı/solar off the open notches
     scatterRoofGrass(roofPoly, roofYv, g, f3OpenHoles);
     scatterRoofCali(roofPoly, roofYv, g, villaBuildSerial, roofAvoid);
-    if(STATE.roofSolar) scatterRoofSolar(roofPoly, roofYv, g, roofAvoid);
+    if(STATE.roofSolar){
+      if(STATE.roofSolarDense){ var _dr=scatterRoofSolarDense(roofPoly, roofYv, g, roofAvoid); solarTally(villaKey, _dr.n, _dr.factor); }   // dense roof-aligned low-tilt grid
+      else solarTally(villaKey, scatterRoofSolar(roofPoly, roofYv, g, roofAvoid), 1.0);                                                     // optimal tilted-south rows
+    }
   }
 
   // Generic editable-window builder: glass pane + vertical/horizontal mullions + registered panjur.
@@ -4724,6 +4964,7 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
         vSolHolder.add(vMod);
       }
       g.add(vSolHolder);
+      solarTally(villaKey, vSolCols*vSolRows, solarOrientFactor(Math.atan2(VER_H_NEAR-VER_H_FAR,VER_DEPTH)*180/Math.PI, Math.atan2(ge.nx,-ge.ny)*180/Math.PI));   // veranda awning: low slope toward garden
     }
     // 2 wooden support columns at far end corners — extend down to ground (past subasman)
     var SUBASMAN_H=0.8;
@@ -5123,7 +5364,7 @@ function buildVillas3D(){
   villaEntries.length=0;
   stairZones.length=0;
   villaFootprints.length=0;
-  villaStairMeta={};villaOpenMeta={};villaF2Poly={};villaAutoWin={};villaStairInfo={};villaWingWin={};
+  villaStairMeta={};villaOpenMeta={};villaF2Poly={};villaAutoWin={};villaStairInfo={};villaWingWin={};villaSolar={};
   windowPanes.length=0;
   const h=STATE.floorCount*FLOOR_H;
   if(STATE.mode==='free'){
@@ -6472,6 +6713,7 @@ STATE.villaStyleF2='woodwide';  // Kaba Ahsap
 STATE.villaStyleRoof='beton';
 STATE.roofGreen=true;   // green roof on the villa terrace: real blade grass + a few çalı (EZ-tree bushes)
 STATE.roofSolar=true;   // tilted PV rows on the green roof (biosolar)
+STATE.roofSolarDense=false; // false → optimal tilted-south spaced rows; true → dense roof-aligned low-tilt grid
 STATE.solarTrack=false; // false → panels parked at the annual-optimum south tilt; true → track the live sun
 STATE.tileAlignment='world'; // 'villa' = aligned with building walls; 'world' = world-axis (angled)
 STATE.fenceWallStyle='koyu'; // outer land boundary fence wall color (GLOBAL — land boundary, not per villa)
