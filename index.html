@@ -669,6 +669,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
         <button class="palette-item" data-obj="tree-menu" title="Agac / Bitki">&#127795;</button>
         <button class="palette-item" data-obj="pool" title="Havuz">&#127946;</button>
         <button class="palette-item" data-obj="fence" title="Cit">&#9475;</button>
+        <button class="palette-item" data-obj="gate" title="Bahce Kapisi (arac + yaya)">&#128682;</button>
         <button class="palette-item" data-obj="human" title="Insan">&#128694;</button>
         <button class="palette-item" data-obj="dog" title="Kopek">&#128054;</button>
         <button class="palette-item" data-obj="chicken" title="Tavuk">&#128020;</button>
@@ -809,6 +810,7 @@ const STATE={
   yCenter:[18,25],
   yEdgePts:[{edge:4,t:0.5,edges:[2,3,4]},{edge:1,t:0.5},{edge:0,t:0.5}],
   vb:{x:0,y:0,w:600,h:600},sunHour:10,sunMonth:3,objects3D:[],
+  gates:[],   // perimeter wall gates: [{edge, t, carW, pedW}] — placed by drag-drop on the outer fence
   // Interior room layouts, keyed by villa (A/B/C in parcelled, f<id> in free). Walls in villa-local
   // OBB coords (u along longest edge, v perpendicular, origin = footprint centroid) so they ride
   // moves/rotations. doors reference a wall by index with a position t (0..1) along it.
@@ -2039,9 +2041,12 @@ var DEFAULT_INTERIORS=null;
 var INTERIORS_KEY='arazi_interiors_v1';
 function saveInteriors(){try{localStorage.setItem(INTERIORS_KEY,JSON.stringify(STATE.interiors||{}));}catch(e){}}
 function loadInteriors(){try{var s=localStorage.getItem(INTERIORS_KEY);if(s){var o=JSON.parse(s);if(o&&typeof o==='object')return o;}}catch(e){}return null;}
+var GATES_KEY='arazi_gates_v1';
+function saveGates(){try{localStorage.setItem(GATES_KEY,JSON.stringify(STATE.gates||[]));}catch(e){}}
+function loadGates(){try{var s=localStorage.getItem(GATES_KEY);if(s){var o=JSON.parse(s);if(Array.isArray(o))return o;}}catch(e){}return null;}
 function roomHintMsg(m){var el=document.getElementById('roomHint');if(el){el.textContent=m;el.classList.add('show');setTimeout(function(){el.classList.remove('show');},3500);}}
 function exportPlan(){
-  var data=JSON.stringify({version:1,exported:1,interiors:STATE.interiors||{}},null,1);
+  var data=JSON.stringify({version:1,exported:1,interiors:STATE.interiors||{},gates:STATE.gates||[]},null,1);
   try{if(navigator.clipboard)navigator.clipboard.writeText(data);}catch(e){}
   try{
     var blob=new Blob([data],{type:'application/json'});var url=URL.createObjectURL(blob);
@@ -2055,6 +2060,7 @@ function importPlanText(text){
     var o=JSON.parse(text); var inter=(o&&o.interiors)?o.interiors:o;
     if(!inter||typeof inter!=='object')throw new Error('geçersiz');
     STATE.interiors=inter; saveInteriors();
+    if(o&&Array.isArray(o.gates)){STATE.gates=o.gates;saveGates();if(threeInited)buildLandFence(STATE.fenceWallStyle||'beton');}
     if(threeInited)buildVillas3D();
     if(STATE.roomEdit&&STATE.roomEdit.active){roomBuildVillaButtons();renderFull();}
     roomHintMsg('Plan içe aktarıldı');
@@ -5174,6 +5180,7 @@ function createHuman(){
   armL.userData.isArm=true;armR.userData.isArm=true;
   g.add(armL);g.add(armR);
   g.userData.wanderer={dir:Math.random()*Math.PI*2,speed:.01+Math.random()*.01,timer:0,turnIn:60+Math.random()*120,type:'human'};
+  g.scale.setScalar(1.75/1.30);   // model is built ~1.30 m tall → scale to a real ~1.75 m adult
   return g;
 }
 function createDog(){
@@ -5278,7 +5285,7 @@ function wandererStep(obj){
   }
 }
 
-function createObj(type,x,z){if(type&&type.indexOf('eztree:')===0){const g=new THREE.Group();g.add(_m(new THREE.ConeGeometry(.7,2.4,8),new THREE.MeshBasicMaterial({color:0x2E7D32,transparent:true,opacity:.45}),0,1.2,0,0));g.position.set(x,0,z);return g}let o;switch(type){case'cypress':o=createCypress();break;case'deciduous':o=createDeciduous();break;case'pool':o=createPool();break;case'fence':o=createFenceObj();break;case'pathway':o=createPathway();break;case'human':o=createHuman();break;case'dog':o=createDog();break;case'chicken':o=createChicken();break;default:o=createDeciduous()}o.position.set(x,0,z);return o}
+function createObj(type,x,z){if(type&&type.indexOf('eztree:')===0){const g=new THREE.Group();g.add(_m(new THREE.ConeGeometry(.7,2.4,8),new THREE.MeshBasicMaterial({color:0x2E7D32,transparent:true,opacity:.45}),0,1.2,0,0));g.position.set(x,0,z);return g}let o;switch(type){case'cypress':o=createCypress();break;case'deciduous':o=createDeciduous();break;case'pool':o=createPool();break;case'fence':o=createFenceObj();break;case'gate':o=createGatePreview();break;case'pathway':o=createPathway();break;case'human':o=createHuman();break;case'dog':o=createDog();break;case'chicken':o=createChicken();break;default:o=createDeciduous()}o.position.set(x,0,z);return o}
 function createFenceObj(){const g=new THREE.Group();const mat=new THREE.MeshPhongMaterial({color:0x8B6914});for(let i=0;i<4;i++)g.add(_m(new THREE.BoxGeometry(.1,1.2,.1),mat,i*1.2,.6,0,1));g.add(_m(new THREE.BoxGeometry(3.6,.06,.05),mat,1.8,.9,0,1));g.add(_m(new THREE.BoxGeometry(3.6,.06,.05),mat,1.8,.4,0,1));return g}
 
 // Fence wall style definitions — matches the wall style picker in the UI
@@ -5290,6 +5297,108 @@ const FENCE_WALL_STYLES={
   dogaltas:{color:0xB89868,roughness:0.92,metalness:0.0},
   koyu:{color:0x3A3634,roughness:0.85,metalness:0.05}
 };
+// ── Perimeter gate (car entrance + pedestrian entrance) ─────────────
+// Gates are data-driven (STATE.gates) and rendered as part of the land fence:
+// buildLandFence() cuts a gap in the wall/bars where a gate sits, then drops
+// in pillars + a wide car gate + a narrow pedestrian gate.
+// Style chosen in Gate Lab: horizontal-slat leaves (wood), stone pillars + lamps,
+// full-height pedestrian door with an intercom built into the end pillar.
+const GATE_PILLAR=0.34, GATE_CAR_W=5.0, GATE_PED_W=1.60, GATE_H=2.20, GATE_PILLAR_H=2.65;
+const GATE_LEAF_COLOR=0x6B4A2C, GATE_PILLAR_COLOR=0x8E8680;
+function gateSpan(G){return 3*GATE_PILLAR+((G&&G.carW)||GATE_CAR_W)+((G&&G.pedW)||GATE_PED_W);}
+const GATE_SPAN=3*GATE_PILLAR+GATE_CAR_W+GATE_PED_W;
+
+// Nearest point on the parcel perimeter to a world (x,z) click. Returns the edge
+// index, the clamped position t along it (so the whole gate stays on the edge),
+// the snapped world position and the edge's world rotation.
+function nearestPerimeterPoint(wx,wz){
+  var px=wx, py=-wz, best=null, bD=1e9;
+  for(var i=0;i<parcelM.length;i++){
+    var a=parcelM[i], b=parcelM[(i+1)%parcelM.length];
+    var dx=b[0]-a[0], dy=b[1]-a[1], l2=dx*dx+dy*dy; if(l2<1e-6)continue;
+    var len=Math.sqrt(l2);
+    var marg=Math.min(0.48,(GATE_SPAN/2+0.2)/len);
+    var t=((px-a[0])*dx+(py-a[1])*dy)/l2;
+    t=Math.max(marg,Math.min(1-marg,t));
+    var qx=a[0]+t*dx, qy=a[1]+t*dy, d=Math.hypot(px-qx,py-qy);
+    if(d<bD){bD=d;best={edge:i,t:t,wx:qx,wz:-qy,angle:Math.atan2(dy,dx)};}
+  }
+  return best;
+}
+
+// Build one gate inside the gap [lo,hi] (distance along the edge from corner a).
+// Style is fixed (see Gate Lab): wood horizontal-slat car leaf, full-height
+// pedestrian door, stone pillars with lamps, intercom embedded in the end pillar.
+// box()/place() position by distance d ALONG the edge, height yc, and an optional
+// perpendicular offset pz (toward the street side) — rotation.y=angle aligns it.
+function buildPerimeterGate(group,a,ux,uy,angle,lo,hi,G,gi,mats){
+  var capMat=mats.cap;
+  var leafMat=new THREE.MeshStandardMaterial({color:GATE_LEAF_COLOR,roughness:0.55,metalness:0.35});
+  var frameMat=new THREE.MeshStandardMaterial({color:new THREE.Color(GATE_LEAF_COLOR).multiplyScalar(0.6).getHex(),roughness:0.45,metalness:0.55});
+  var pillarMat=new THREE.MeshStandardMaterial({color:GATE_PILLAR_COLOR,roughness:0.95});
+  var glassMat=new THREE.MeshStandardMaterial({color:0x6A8DA0,roughness:0.18,metalness:0.25,transparent:true,opacity:0.55});
+  function place(m,d,yc,pz){pz=pz||0;var px=a[0]+ux*d, py=-(a[1]+uy*d);m.position.set(px+pz*uy,yc,py+pz*ux);m.rotation.y=angle;m.castShadow=true;m.receiveShadow=true;m.userData.gateIndex=gi;m.userData.isGate=true;group.add(m);return m;}
+  function box(L,H,T,matr,d,yc,pz){return place(new THREE.Mesh(new THREE.BoxGeometry(L,H,T),matr),d,yc,pz);}
+  var carW=(G.carW)||GATE_CAR_W, pedW=(G.pedW)||GATE_PED_W, pw=GATE_PILLAR, H=GATE_H;
+  var pedH=Math.max(H,2.05), pillarH=Math.max(H,pedH)+0.45;
+  var d0=lo+pw/2, carC=lo+pw+carW/2, d1=lo+pw+carW+pw/2, pedC=lo+pw+carW+pw+pedW/2, d2=hi-pw/2;
+  // Three stone pillars with a cap on each
+  [d0,d1,d2].forEach(function(dp){
+    box(pw,pillarH,pw,pillarMat,dp,pillarH/2);
+    box(pw+0.08,0.08,pw+0.08,capMat,dp,pillarH+0.04);
+  });
+  // Lamps on the two end pillars
+  [d0,d2].forEach(function(dp){
+    place(new THREE.Mesh(new THREE.BoxGeometry(0.16,0.22,0.16),new THREE.MeshStandardMaterial({color:0xFFF1C0,emissive:0xFFD66B,emissiveIntensity:0.9,roughness:0.3})),dp,pillarH+0.20,0);
+    box(0.06,0.10,0.06,frameMat,dp,pillarH+0.04,0);
+  });
+  // Gate leaf: 'slats' = horizontal lamellas (car), 'door' = solid full-height (pedestrian)
+  function leaf(cx,w,h,pattern){
+    var y0=0.06, inH=h-0.12, midY=y0+h/2;
+    box(w,0.07,0.07,frameMat,cx,y0+h-0.035);     // top rail
+    box(w,0.07,0.07,frameMat,cx,y0+0.035);       // bottom rail
+    box(0.07,h,0.07,frameMat,cx-w/2+0.035,midY); // stiles
+    box(0.07,h,0.07,frameMat,cx+w/2-0.035,midY);
+    if(pattern==='slats'){
+      var m=Math.max(2,Math.floor(inH/0.16));
+      for(var j=0;j<=m;j++){box(w-0.10,0.10,0.06,leafMat,cx,y0+0.10+j*(inH/m));}
+    }else{                                        // full-height door
+      box(w-0.06,inH,0.06,leafMat,cx,midY);
+      box(w*0.55,0.18,0.02,glassMat,cx,y0+h*0.80,0.04);          // vision slit
+      box(0.045,0.30,0.06,frameMat,cx+w/2-0.16,midY-0.05,0.05);  // handle
+    }
+  }
+  leaf(carC,carW,H,'slats');
+  leaf(pedC,pedW,pedH,'door');
+  // Intercom / visual-security panel embedded in the end pillar's street face
+  (function(){
+    var dpx=d2, pz=pw/2, cy=Math.min(1.45,pillarH-0.7);
+    var faceMat=new THREE.MeshStandardMaterial({color:0x101317,roughness:0.3,metalness:0.5});
+    box(0.18,0.54,0.05,faceMat,dpx,cy,pz+0.015);                  // housing
+    place(new THREE.Mesh(new THREE.BoxGeometry(0.13,0.17,0.02),new THREE.MeshStandardMaterial({color:0x0A2A3A,emissive:0x1D76B0,emissiveIntensity:0.9,roughness:0.2})),dpx,cy+0.13,pz+0.045); // screen
+    var lens=new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.024,0.03,16),new THREE.MeshStandardMaterial({color:0x05070A,roughness:0.1,metalness:0.4}));lens.rotation.x=Math.PI/2;place(lens,dpx,cy+0.23,pz+0.05);
+    place(new THREE.Mesh(new THREE.SphereGeometry(0.012,8,8),new THREE.MeshStandardMaterial({color:0xFF3B30,emissive:0xFF2A20,emissiveIntensity:1.1})),dpx+0.05,cy+0.23,pz+0.05); // rec dot
+    var keyMat=new THREE.MeshStandardMaterial({color:0x3A3F45,roughness:0.6});
+    for(var r=0;r<4;r++)for(var cc=0;cc<3;cc++){box(0.025,0.025,0.012,keyMat,dpx-0.04+cc*0.04,cy-0.05-r*0.035,pz+0.045);}
+    var call=new THREE.Mesh(new THREE.CylinderGeometry(0.022,0.022,0.012,14),new THREE.MeshStandardMaterial({color:0x1B9E54,emissive:0x16C059,emissiveIntensity:0.9}));call.rotation.x=Math.PI/2;place(call,dpx,cy-0.21,pz+0.045);
+  })();
+}
+
+// A translucent ghost preview, laid out along local +X centred at the origin.
+function createGatePreview(){
+  var g=new THREE.Group();
+  var wallMat=new THREE.MeshStandardMaterial({color:GATE_PILLAR_COLOR,roughness:0.95});
+  var ironMat=new THREE.MeshStandardMaterial({color:GATE_LEAF_COLOR,roughness:0.55,metalness:0.35});
+  var pw=GATE_PILLAR, carW=GATE_CAR_W, pedW=GATE_PED_W, span=GATE_SPAN, x=-span/2;
+  function box(L,H,T,m,cx,cy){var b=new THREE.Mesh(new THREE.BoxGeometry(L,H,T),m);b.position.set(cx,cy,0);g.add(b);return b;}
+  box(pw,GATE_PILLAR_H,pw,wallMat,x+pw/2,GATE_PILLAR_H/2);
+  box(carW,GATE_H,0.05,ironMat,x+pw+carW/2,GATE_H/2+0.05);
+  box(pw,GATE_PILLAR_H,pw,wallMat,x+pw+carW+pw/2,GATE_PILLAR_H/2);
+  box(pedW,GATE_H,0.05,ironMat,x+pw+carW+pw+pedW/2,GATE_H/2+0.05);
+  box(pw,GATE_PILLAR_H,pw,wallMat,x+span-pw/2,GATE_PILLAR_H/2);
+  return g;
+}
+
 function buildLandFence(wallStyle){
   if(!landFenceGroup)return;
   while(landFenceGroup.children.length){var c=landFenceGroup.children[0];landFenceGroup.remove(c);if(c.geometry)c.geometry.dispose()}
@@ -5299,52 +5408,56 @@ function buildLandFence(wallStyle){
   var wallMat=new THREE.MeshStandardMaterial({color:cfg.color,roughness:cfg.roughness,metalness:cfg.metalness});
   var capMat=new THREE.MeshStandardMaterial({color:0x555048,roughness:0.85});
   var ironMat=new THREE.MeshStandardMaterial({color:0x1C1C1C,roughness:0.3,metalness:0.8});
-  // For each edge of the land parcel, build wall + iron rods
+  var gateMats={wall:wallMat,iron:ironMat,cap:capMat};
+  // For each edge of the land parcel, build wall + iron rods (leaving gaps for gates)
   for(var fi=0;fi<parcelM.length;fi++){
     var a=parcelM[fi], b=parcelM[(fi+1)%parcelM.length];
     var dx=b[0]-a[0], dy=b[1]-a[1];
     var len=Math.hypot(dx,dy);
     if(len<0.1)continue;
-    var mxP=(a[0]+b[0])/2, myP=(a[1]+b[1])/2;
     var angle=Math.atan2(dy,dx);
-    // Wall block
-    var wall=new THREE.Mesh(new THREE.BoxGeometry(len,WALL_H,WALL_THICK),wallMat);
-    wall.position.set(mxP,WALL_H/2,-myP);
-    wall.rotation.y=angle;
-    wall.castShadow=true;wall.receiveShadow=true;
-    landFenceGroup.add(wall);
-    // Wall cap (small overhang)
-    var cap=new THREE.Mesh(new THREE.BoxGeometry(len+0.05,0.05,WALL_THICK+0.08),capMat);
-    cap.position.set(mxP,WALL_H+0.025,-myP);
-    cap.rotation.y=angle;
-    landFenceGroup.add(cap);
-    // Iron vertical bars with a GENTLE point on top (not sharp — legal)
-    var spacing=0.12;
-    var nBars=Math.floor(len/spacing);
     var ux=dx/len, uy=dy/len;
-    for(var bi=0;bi<nBars;bi++){
-      var t=(bi-(nBars-1)/2)*spacing;
-      var bx=mxP+ux*t, by=myP+uy*t;
-      var bar=new THREE.Mesh(new THREE.BoxGeometry(IRON_THICK,IRON_H,IRON_THICK),ironMat);
-      bar.position.set(bx,WALL_H+IRON_H/2,-by);
-      bar.rotation.y=angle;
-      bar.castShadow=true;
-      landFenceGroup.add(bar);
-      // Gentle pointed tip — short, wide cone (not legal-sharp)
-      var tip=new THREE.Mesh(new THREE.ConeGeometry(IRON_THICK*1.6,0.05,6),ironMat);
-      tip.position.set(bx,WALL_H+IRON_H+0.025,-by);
-      tip.rotation.y=angle;
-      landFenceGroup.add(tip);
+    var posAt=function(d){return [a[0]+ux*d, -(a[1]+uy*d)];};
+    // Gate openings on this edge → gap intervals (distance along the edge from corner a)
+    var gaps=[], GL=STATE.gates||[];
+    for(var gi=0;gi<GL.length;gi++){
+      var G=GL[gi]; if(G.edge!==fi)continue;
+      var sp=gateSpan(G), c=G.t*len, glo=c-sp/2, ghi=c+sp/2;
+      if(ghi<=0.05||glo>=len-0.05)continue;
+      gaps.push({lo:Math.max(0,glo),hi:Math.min(len,ghi),G:G,gi:gi});
     }
-    // Top + bottom horizontal rails
-    var topRail=new THREE.Mesh(new THREE.BoxGeometry(len,IRON_THICK*1.2,IRON_THICK*1.2),ironMat);
-    topRail.position.set(mxP,WALL_H+IRON_H-0.02,-myP);
-    topRail.rotation.y=angle;
-    landFenceGroup.add(topRail);
-    var botRail=new THREE.Mesh(new THREE.BoxGeometry(len,IRON_THICK*1.2,IRON_THICK*1.2),ironMat);
-    botRail.position.set(mxP,WALL_H+0.05,-myP);
-    botRail.rotation.y=angle;
-    landFenceGroup.add(botRail);
+    gaps.sort(function(p,q){return p.lo-q.lo;});
+    var ng=[];for(var gk=0;gk<gaps.length;gk++){if(ng.length&&gaps[gk].lo<ng[ng.length-1].hi)continue;ng.push(gaps[gk]);}gaps=ng;
+    // Solid wall runs = edge minus the gaps
+    var solids=[], cur=0;
+    for(var gk=0;gk<gaps.length;gk++){if(gaps[gk].lo>cur+0.05)solids.push([cur,gaps[gk].lo]);cur=Math.max(cur,gaps[gk].hi);}
+    if(cur<len-0.05)solids.push([cur,len]);
+    // Wall block + cap + rails for each solid run
+    for(var si=0;si<solids.length;si++){
+      var s0=solids[si][0], s1=solids[si][1], sl=s1-s0, cd=(s0+s1)/2, p=posAt(cd);
+      var wall=new THREE.Mesh(new THREE.BoxGeometry(sl,WALL_H,WALL_THICK),wallMat);
+      wall.position.set(p[0],WALL_H/2,p[1]);wall.rotation.y=angle;wall.castShadow=true;wall.receiveShadow=true;landFenceGroup.add(wall);
+      var cap=new THREE.Mesh(new THREE.BoxGeometry(sl+0.05,0.05,WALL_THICK+0.08),capMat);
+      cap.position.set(p[0],WALL_H+0.025,p[1]);cap.rotation.y=angle;landFenceGroup.add(cap);
+      var topRail=new THREE.Mesh(new THREE.BoxGeometry(sl,IRON_THICK*1.2,IRON_THICK*1.2),ironMat);
+      topRail.position.set(p[0],WALL_H+IRON_H-0.02,p[1]);topRail.rotation.y=angle;landFenceGroup.add(topRail);
+      var botRail=new THREE.Mesh(new THREE.BoxGeometry(sl,IRON_THICK*1.2,IRON_THICK*1.2),ironMat);
+      botRail.position.set(p[0],WALL_H+0.05,p[1]);botRail.rotation.y=angle;landFenceGroup.add(botRail);
+    }
+    // Iron vertical bars with a GENTLE point on top (skip bars that fall in a gate gap)
+    var spacing=0.12, nBars=Math.floor(len/spacing);
+    for(var bi=0;bi<nBars;bi++){
+      var t=(bi-(nBars-1)/2)*spacing, d=len/2+t, inGap=false;
+      for(var gk=0;gk<gaps.length;gk++){if(d>=gaps[gk].lo&&d<=gaps[gk].hi){inGap=true;break;}}
+      if(inGap)continue;
+      var bp=posAt(d);
+      var bar=new THREE.Mesh(new THREE.BoxGeometry(IRON_THICK,IRON_H,IRON_THICK),ironMat);
+      bar.position.set(bp[0],WALL_H+IRON_H/2,bp[1]);bar.rotation.y=angle;bar.castShadow=true;landFenceGroup.add(bar);
+      var tip=new THREE.Mesh(new THREE.ConeGeometry(IRON_THICK*1.6,0.05,6),ironMat);
+      tip.position.set(bp[0],WALL_H+IRON_H+0.025,bp[1]);tip.rotation.y=angle;landFenceGroup.add(tip);
+    }
+    // Gate structures in the gaps
+    for(var gk=0;gk<gaps.length;gk++){buildPerimeterGate(landFenceGroup,a,ux,uy,angle,gaps[gk].lo,gaps[gk].hi,gaps[gk].G,gaps[gk].gi,gateMats);}
   }
 }
 
@@ -5539,6 +5652,11 @@ threeCanvas.addEventListener('pointerdown',function(e){
   updateMouse3D(e);raycaster.setFromCamera(mouse2,threeCamera);
   // Eraser
   if(eraserMode){
+    // Gate on the perimeter wall?
+    if(landFenceGroup){const gits=raycaster.intersectObjects(landFenceGroup.children,true);
+      if(gits.length>0&&gits[0].object.userData&&gits[0].object.userData.gateIndex!=null){
+        STATE.gates.splice(gits[0].object.userData.gateIndex,1);saveGates();buildLandFence(STATE.fenceWallStyle||'beton');
+        e.stopPropagation();e.stopImmediatePropagation();return;}}
     const its=raycaster.intersectObjects(objectGroup.children,true);
     if(its.length>0){let o=its[0].object;while(o.parent&&o.parent!==objectGroup)o=o.parent;const wasPool=o.userData&&o.userData.isPool;objectGroup.remove(o);STATE.objects3D=STATE.objects3D.filter(x=>x.mesh!==o);if(wasPool)refreshPoolGround()}
     e.stopPropagation();e.stopImmediatePropagation();return;
@@ -5547,6 +5665,14 @@ threeCanvas.addEventListener('pointerdown',function(e){
   if(placementMode){
     e.stopPropagation();e.stopImmediatePropagation();
     const int=new THREE.Vector3();raycaster.ray.intersectPlane(groundPlane,int);
+    // Perimeter gate: snap to nearest outer-wall edge and drop a car+pedestrian gate
+    if(placementMode==='gate'){
+      const snap=nearestPerimeterPoint(int.x,int.z);
+      if(snap){STATE.gates.push({edge:snap.edge,t:snap.t,carW:GATE_CAR_W,pedW:GATE_PED_W});saveGates();buildLandFence(STATE.fenceWallStyle||'beton');}
+      placementMode=null;clearGhost();
+      document.querySelectorAll('.palette-item').forEach(b=>b.classList.remove('active'));
+      return;
+    }
     // Sims-style for fence/pool: first click = anchor, second click = build
     if(placementMode==='fence'&&!ghostState){
       // First click: set anchor, replace ghost with a simple stretched box
@@ -5622,6 +5748,8 @@ threeCanvas.addEventListener('pointermove',function(e){
   const int=new THREE.Vector3();raycaster.ray.intersectPlane(groundPlane,int);
   // Ghost follows mouse
   if(ghostMesh&&!ghostState){ghostMesh.position.set(int.x,0,int.z)}
+  // Gate ghost snaps onto the nearest outer-wall edge and aligns with it
+  if(placementMode==='gate'&&ghostMesh){const snap=nearestPerimeterPoint(int.x,int.z);if(snap){ghostMesh.position.set(snap.wx,0,snap.wz);ghostMesh.rotation.y=snap.angle;}}
   // Ghost stretching for fence/pool — box stretches from anchor to mouse
   if(ghostMesh&&ghostState){
     const dx=int.x-ghostState.startX,dz=int.z-ghostState.startZ,len=Math.max(.1,Math.hypot(dx,dz));
@@ -6476,6 +6604,7 @@ function animateThree(){
 // INIT — Parselli Optimum 3D
 // Interior plans: your saved edits (localStorage) take precedence, then the built-in default, then empty.
 STATE.interiors=loadInteriors()||DEFAULT_INTERIORS||{};
+STATE.gates=loadGates()||[];
 computeParcels();computeVillaPolys();
 renderFull();updateStatusBar();
 setTimeout(()=>{
