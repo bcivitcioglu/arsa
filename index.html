@@ -4992,6 +4992,45 @@ function buildModernVilla(poly2D,height,color,rectCantilever,addVeranda,opt5Mode
     vBeam.position.set(vBeamCx,VER_H_FAR-0.06,-vBeamCy);
     vBeam.rotation.y=vEdgeAngle;
     g.add(vBeam);
+    // === Wooden deck FLOOR under the shade — RAISED on an open post structure (subasman level) ===
+    // Deck top sits flush with the house floor (local y=0); underneath is open framing (rim beams +
+    // posts down to grade), NOT a solid plinth.
+    var vDeckCx=vmx+ge.nx*(VER_DEPTH/2), vDeckCy=vmy+ge.ny*(VER_DEPTH/2);
+    var vDeckThick=0.06;
+    // wood decking boards, running outward toward the garden
+    var vPlankN=Math.max(4,Math.round(VER_W/0.22));
+    for(var vdp=0;vdp<vPlankN;vdp++){
+      var vdt=(vdp+0.5)/vPlankN-0.5;
+      var vdx=vDeckCx+vdt*VER_W*ge.ux, vdy=vDeckCy+vdt*VER_W*ge.uy;
+      var vPlank=new THREE.Mesh(new THREE.BoxGeometry((VER_W/vPlankN)*0.9,vDeckThick,VER_DEPTH),matWood);
+      vPlank.position.set(vdx,-vDeckThick/2,-vdy);
+      vPlank.rotation.y=vEdgeAngle; vPlank.castShadow=true; vPlank.receiveShadow=true;
+      g.add(vPlank);
+    }
+    // perimeter rim beams just under the boards
+    var vBeamH=0.16, vRimY=-vDeckThick-vBeamH/2;
+    [0,VER_DEPTH].forEach(function(dd){                                 // near + far (run along width)
+      var rx=vmx+ge.nx*dd, ry=vmy+ge.ny*dd;
+      var rb=new THREE.Mesh(new THREE.BoxGeometry(VER_W,vBeamH,0.1),matWoodDark);
+      rb.position.set(rx,vRimY,-ry); rb.rotation.y=vEdgeAngle; rb.castShadow=true; g.add(rb);
+    });
+    [-1,1].forEach(function(sgn){                                       // left + right (run along depth)
+      var sx=vmx+sgn*(VER_W/2)*ge.ux+ge.nx*(VER_DEPTH/2);
+      var sy=vmy+sgn*(VER_W/2)*ge.uy+ge.ny*(VER_DEPTH/2);
+      var sb=new THREE.Mesh(new THREE.BoxGeometry(0.1,vBeamH,VER_DEPTH),matWoodDark);
+      sb.position.set(sx,vRimY,-sy); sb.rotation.y=vEdgeAngle; sb.castShadow=true; g.add(sb);
+    });
+    // support posts from grade (-SUB_H) up to the beams — underside stays open
+    var vPostBot=-SUB_H, vPostTop=vRimY-vBeamH/2, vPostH=vPostTop-vPostBot, vPostYc=(vPostTop+vPostBot)/2;
+    for(var pds=0;pds<=2;pds++){                                        // near / mid / far
+      var pd=pds*(VER_DEPTH/2);
+      for(var pws=-1;pws<=1;pws+=2){                                    // left / right
+        var ppx=vmx+pws*(VER_W/2-0.08)*ge.ux+ge.nx*pd;
+        var ppy=vmy+pws*(VER_W/2-0.08)*ge.uy+ge.ny*pd;
+        var pp=new THREE.Mesh(new THREE.BoxGeometry(0.12,vPostH,0.12),matWoodDark);
+        pp.position.set(ppx,vPostYc,-ppy); pp.rotation.y=vEdgeAngle; pp.castShadow=true; g.add(pp);
+      }
+    }
   }
 
   // === SUBASMAN (plinth) + ENTRANCE STEPS ===
@@ -5305,6 +5344,8 @@ const FENCE_WALL_STYLES={
 // full-height pedestrian door with an intercom built into the end pillar.
 const GATE_PILLAR=0.34, GATE_CAR_W=5.0, GATE_PED_W=1.60, GATE_H=2.20, GATE_PILLAR_H=2.65;
 const GATE_LEAF_COLOR=0x6B4A2C, GATE_PILLAR_COLOR=0x8E8680;
+// Animatable gate leaves, rebuilt by buildLandFence: {kind:'ped'|'car', pivot/group, isOpen, ...}
+var gateAnimators=[];
 function gateSpan(G){return 3*GATE_PILLAR+((G&&G.carW)||GATE_CAR_W)+((G&&G.pedW)||GATE_PED_W);}
 const GATE_SPAN=3*GATE_PILLAR+GATE_CAR_W+GATE_PED_W;
 
@@ -5337,8 +5378,8 @@ function buildPerimeterGate(group,a,ux,uy,angle,lo,hi,G,gi,mats){
   var frameMat=new THREE.MeshStandardMaterial({color:new THREE.Color(GATE_LEAF_COLOR).multiplyScalar(0.6).getHex(),roughness:0.45,metalness:0.55});
   var pillarMat=new THREE.MeshStandardMaterial({color:GATE_PILLAR_COLOR,roughness:0.95});
   var glassMat=new THREE.MeshStandardMaterial({color:0x6A8DA0,roughness:0.18,metalness:0.25,transparent:true,opacity:0.55});
-  function place(m,d,yc,pz){pz=pz||0;var px=a[0]+ux*d, py=-(a[1]+uy*d);m.position.set(px+pz*uy,yc,py+pz*ux);m.rotation.y=angle;m.castShadow=true;m.receiveShadow=true;m.userData.gateIndex=gi;m.userData.isGate=true;group.add(m);return m;}
-  function box(L,H,T,matr,d,yc,pz){return place(new THREE.Mesh(new THREE.BoxGeometry(L,H,T),matr),d,yc,pz);}
+  function place(m,d,yc,pz,target){pz=pz||0;var px=a[0]+ux*d, py=-(a[1]+uy*d);m.position.set(px+pz*uy,yc,py+pz*ux);m.rotation.y=angle;m.castShadow=true;m.receiveShadow=true;m.userData.gateIndex=gi;m.userData.isGate=true;(target||group).add(m);return m;}
+  function box(L,H,T,matr,d,yc,pz,target){return place(new THREE.Mesh(new THREE.BoxGeometry(L,H,T),matr),d,yc,pz,target);}
   var carW=(G.carW)||GATE_CAR_W, pedW=(G.pedW)||GATE_PED_W, pw=GATE_PILLAR, H=GATE_H;
   var pedH=Math.max(H,2.05), pillarH=Math.max(H,pedH)+0.45;
   var d0=lo+pw/2, carC=lo+pw+carW/2, d1=lo+pw+carW+pw/2, pedC=lo+pw+carW+pw+pedW/2, d2=hi-pw/2;
@@ -5368,8 +5409,44 @@ function buildPerimeterGate(group,a,ux,uy,angle,lo,hi,G,gi,mats){
       box(0.045,0.30,0.06,frameMat,cx+w/2-0.16,midY-0.05,0.05);  // handle
     }
   }
-  leaf(carC,carW,H,'slats');
-  leaf(pedC,pedW,pedH,'door');
+  // Car leaf: horizontal-slat panel that SLIDES open (see updateGates) when you drive up to it.
+  var carPiv=new THREE.Group(); carPiv.userData.gateIndex=gi; carPiv.userData.isGate=true; group.add(carPiv);
+  (function(){
+    var y0=0.06, inH=H-0.12, midY=y0+H/2, w=carW, cx=carC;
+    box(w,0.07,0.07,frameMat,cx,y0+H-0.035,0,carPiv);
+    box(w,0.07,0.07,frameMat,cx,y0+0.035,0,carPiv);
+    box(0.07,H,0.07,frameMat,cx-w/2+0.035,midY,0,carPiv);
+    box(0.07,H,0.07,frameMat,cx+w/2-0.035,midY,0,carPiv);
+    var m=Math.max(2,Math.floor(inH/0.16));
+    for(var j=0;j<=m;j++){ box(w-0.10,0.10,0.06,leafMat,cx,y0+0.10+j*(inH/m),0,carPiv); }
+  })();
+  var carCwx=a[0]+ux*carC, carCwz=-(a[1]+uy*carC);
+  gateAnimators.push({kind:'car', group:carPiv, slideVec:new THREE.Vector3(-ux*carW,0,uy*carW), t:0,
+                      isOpen:false, openRadius:7.5, wx:carCwx, wz:carCwz, gateIndex:gi, collider:null});
+  // Pedestrian leaf: a hinged door that auto-opens (swings into the property) on approach.
+  (function(){
+    var pedLo=lo+pw+carW+pw;                                  // hinge at the middle-pillar side
+    var hinge=[a[0]+ux*pedLo, -(a[1]+uy*pedLo)];
+    var piv=new THREE.Group(); piv.position.set(hinge[0],0,hinge[1]); piv.rotation.y=angle;
+    // door leaf built in LOCAL space: hinge at x=0, leaf runs +X to pedW
+    function lb(L,Hh,T,matr,cx,cy,cz){var m=new THREE.Mesh(new THREE.BoxGeometry(L,Hh,T),matr);m.position.set(cx,cy,cz||0);m.castShadow=true;m.receiveShadow=true;m.userData.gateIndex=gi;m.userData.isGate=true;piv.add(m);}
+    var y0=0.06, inH=pedH-0.12, midY=y0+pedH/2, w=pedW;
+    lb(w,0.07,0.07,frameMat,w/2,y0+pedH-0.035);
+    lb(w,0.07,0.07,frameMat,w/2,y0+0.035);
+    lb(0.07,pedH,0.07,frameMat,0.035,midY);
+    lb(0.07,pedH,0.07,frameMat,w-0.035,midY);
+    lb(w-0.06,inH,0.06,leafMat,w/2,midY);
+    lb(w*0.55,0.18,0.02,glassMat,w/2,y0+pedH*0.80,0.04);       // vision slit
+    lb(0.045,0.30,0.06,frameMat,w-0.16,midY-0.05,0.05);        // handle
+    group.add(piv);
+    // swing direction: open toward the parcel interior
+    var cen=polyCentroid(parcelM), pedC2=lo+pw+carW+pw+pedW/2;
+    var gpx=a[0]+ux*pedC2, gpy=a[1]+uy*pedC2;
+    var inx=cen[0]-gpx, iny=cen[1]-gpy, il=Math.hypot(inx,iny)||1; inx/=il; iny/=il;
+    var sgn=(ux*iny - uy*inx)>=0 ? 1 : -1;
+    gateAnimators.push({kind:'ped', pivot:piv, baseRot:angle, openRot:angle+sgn*Math.PI/2,
+                        isOpen:false, openRadius:2.6, wx:hinge[0], wz:hinge[1]});
+  })();
   // Intercom / visual-security panel embedded in the end pillar's street face
   (function(){
     var dpx=d2, pz=pw/2, cy=Math.min(1.45,pillarH-0.7);
@@ -5402,6 +5479,7 @@ function createGatePreview(){
 function buildLandFence(wallStyle){
   if(!landFenceGroup)return;
   while(landFenceGroup.children.length){var c=landFenceGroup.children[0];landFenceGroup.remove(c);if(c.geometry)c.geometry.dispose()}
+  gateAnimators.length=0;   // gate leaves are rebuilt below
   var cfg=FENCE_WALL_STYLES[wallStyle]||FENCE_WALL_STYLES.beton;
   var WALL_H=1.0, IRON_H=1.0;
   var WALL_THICK=0.18, IRON_THICK=0.025;
@@ -5459,6 +5537,206 @@ function buildLandFence(wallStyle){
     // Gate structures in the gaps
     for(var gk=0;gk<gaps.length;gk++){buildPerimeterGate(landFenceGroup,a,ux,uy,angle,gaps[gk].lo,gaps[gk].hi,gaps[gk].G,gaps[gk].gi,gateMats);}
   }
+  if(typeof placeParkedCars==='function') placeParkedCars();   // re-park cars at the car gates (reads STATE.gates)
+  rebuildPerimeterColliders();   // make the outer wall solid for the character (gaps at gate openings)
+}
+
+// ── Perimeter wall collision (character can't walk through it) ──────────
+// Adds the parcel-boundary wall to wallColliders as solid runs, leaving a gap at
+// each gate opening so you can pass through gates. Re-run after any rebuild.
+function rebuildPerimeterColliders(){
+  if(typeof wallColliders==='undefined') return;
+  for(var i=wallColliders.length-1;i>=0;i--){ var f=wallColliders[i].floor; if(f==='perimeter'||f==='cargate') wallColliders.splice(i,1); }
+  var FENCE_TOP=2.0;
+  for(var fi=0;fi<parcelM.length;fi++){
+    var a=parcelM[fi], b=parcelM[(fi+1)%parcelM.length];
+    var dx=b[0]-a[0], dy=b[1]-a[1], len=Math.hypot(dx,dy); if(len<0.1)continue;
+    var ux=dx/len, uy=dy/len;
+    // Gap the whole gate span from the solid wall runs. The pedestrian opening stays open
+    // (auto-opening leaf). The car opening gets its own toggleable collider: solid for the
+    // on-foot character, deactivated by updateGates while you drive through it.
+    var gaps=[], GL=STATE.gates||[];
+    for(var gi=0;gi<GL.length;gi++){ var G=GL[gi]; if(G.edge!==fi)continue;
+      var sp=gateSpan(G), c=G.t*len, lo=c-sp/2, hi=c+sp/2, pw=GATE_PILLAR, carW=(G.carW||GATE_CAR_W);
+      if(hi<=0.05||lo>=len-0.05)continue;
+      gaps.push([Math.max(0,lo),Math.min(len,hi)]);
+      // toggleable collider across the CAR opening (closed by default; driving opens it)
+      var carLo=lo+pw, carHi=lo+pw+carW;
+      var cax=a[0]+ux*carLo, cay=a[1]+uy*carLo, cbx=a[0]+ux*carHi, cby=a[1]+uy*carHi;
+      var anim=null; for(var ai=0;ai<gateAnimators.length;ai++){ if(gateAnimators[ai].kind==='car'&&gateAnimators[ai].gateIndex===gi){anim=gateAnimators[ai];break;} }
+      var col={ax:cax,az:-cay,bx:cbx,bz:-cby,active:!(anim&&anim.isOpen),floor:'cargate',yLow:0,yHigh:FENCE_TOP};
+      wallColliders.push(col);
+      if(anim) anim.collider=col;
+    }
+    gaps.sort(function(p,q){return p[0]-q[0];});
+    var solids=[], cur=0;
+    for(var k=0;k<gaps.length;k++){ if(gaps[k][0]>cur+0.05) solids.push([cur,gaps[k][0]]); cur=Math.max(cur,gaps[k][1]); }
+    if(cur<len-0.05) solids.push([cur,len]);
+    for(var si=0;si<solids.length;si++){
+      var s0=solids[si][0], s1=solids[si][1];
+      var wax=a[0]+ux*s0, way=a[1]+uy*s0, wbx=a[0]+ux*s1, wby=a[1]+uy*s1;
+      wallColliders.push({ax:wax,az:-way,bx:wbx,bz:-wby,active:true,floor:'perimeter',yLow:0,yHigh:FENCE_TOP});
+    }
+  }
+  updateCarCollider();
+}
+
+// Every parked car is a solid obstacle for the character/other cars (4 footprint segments).
+// The car you're currently driving is excluded (you ARE it then).
+function updateCarCollider(){
+  if(typeof wallColliders==='undefined') return;
+  for(var i=wallColliders.length-1;i>=0;i--){ if(wallColliders[i].floor==='parkedcar') wallColliders.splice(i,1); }
+  for(var ci=0;ci<parkedCars.length;ci++){
+    var car=parkedCars[ci]; if(inCar && car===drivingCar) continue;
+    var cx=car.position.x, cz=car.position.z, h=car.rotation.y;
+    var hl=2.35, hw=0.95, fx=Math.cos(h), fz=-Math.sin(h), sx=-fz, sz=fx;
+    var cs=[[cx+fx*hl+sx*hw,cz+fz*hl+sz*hw],[cx+fx*hl-sx*hw,cz+fz*hl-sz*hw],[cx-fx*hl-sx*hw,cz-fz*hl-sz*hw],[cx-fx*hl+sx*hw,cz-fz*hl+sz*hw]];
+    for(var i=0;i<4;i++){ var p=cs[i], q=cs[(i+1)%4];
+      wallColliders.push({ax:p[0],az:p[1],bx:q[0],bz:q[1],active:true,floor:'parkedcar',yLow:0,yHigh:1.5}); }
+  }
+}
+
+// ── Gate leaf animation + proximity auto-open ──────────────────────────
+// Pedestrian gate swings open when the on-foot character is near, closes when away.
+// (Car gate is opened from the driving code, added in the next phase.)
+function updateGates(dt){
+  for(var i=0;i<gateAnimators.length;i++){
+    var g=gateAnimators[i];
+    if(g.kind==='ped' && g.pivot){
+      if(fpMode && !inCar){
+        var d=Math.hypot(g.wx-fpPosition.x, g.wz-fpPosition.z);
+        if(d<g.openRadius) g.isOpen=true; else if(d>g.openRadius+1.2) g.isOpen=false;
+      }else{ g.isOpen=false; }
+      var tgt=g.isOpen?g.openRot:g.baseRot;
+      g.pivot.rotation.y += (tgt-g.pivot.rotation.y)*Math.min(1,dt*5);
+    }else if(g.kind==='car' && g.group){
+      // Slides open when you drive up to it; collider deactivates so the car can pass.
+      if(inCar){
+        var dc=Math.hypot(g.wx-carCtl.x, g.wz-carCtl.z);
+        if(dc<g.openRadius) g.isOpen=true; else if(dc>g.openRadius+2.5) g.isOpen=false;
+      }else{ g.isOpen=false; }
+      if(g.collider) g.collider.active=!g.isOpen;
+      var tp=g.isOpen?1:0;
+      g.t += (tp-g.t)*Math.min(1,dt*3);
+      g.group.position.set(g.slideVec.x*g.t, 0, g.slideVec.z*g.t);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DRIVE MODE — walk up to the parked Tesla, press G (or the button) to drive it,
+// press G again to get out. Simple arcade car model; collides with walls; the car
+// gate slides open as you approach it (updateGates). Builds on character mode (fpMode).
+// ═══════════════════════════════════════════════════════════════
+var carCtl={speed:0, heading:0, x:0, z:0};
+var driveBtn=null;
+function ensureDriveBtn(){
+  if(driveBtn) return;
+  driveBtn=document.createElement('button');
+  driveBtn.id='driveBtn';
+  driveBtn.style.cssText='position:fixed;left:50%;bottom:72px;transform:translateX(-50%);z-index:60;display:none;font:600 15px system-ui,sans-serif;padding:10px 18px;border:none;border-radius:10px;background:#2D6A4F;color:#fff;cursor:pointer;box-shadow:0 3px 14px rgba(0,0,0,.25)';
+  driveBtn.addEventListener('click',toggleCar);
+  document.body.appendChild(driveBtn);
+}
+// Nearest parkable car to the character (within maxD), excluding one being driven.
+function nearestCar(maxD){
+  var best=null, bd=maxD||3.6;
+  for(var i=0;i<parkedCars.length;i++){ var c=parkedCars[i]; if(c===drivingCar) continue;
+    var d=Math.hypot(c.position.x-fpPosition.x, c.position.z-fpPosition.z); if(d<bd){ bd=d; best=c; } }
+  return best;
+}
+function updateDriveBtn(){
+  ensureDriveBtn();
+  if(!fpMode){ driveBtn.style.display='none'; return; }
+  if(inCar){ driveBtn.textContent='🚶 Araçtan in (G)'; driveBtn.style.display='block'; return; }
+  if(nearestCar(3.6)){ driveBtn.textContent='🚗 Sür (G)'; driveBtn.style.display='block'; }
+  else driveBtn.style.display='none';
+}
+function toggleCar(){
+  if(inCar){ exitCar(); return; }
+  if(!fpMode) return;
+  var c=nearestCar(3.6); if(c) enterCar(c);
+}
+function enterCar(car){
+  if(inCar||!car) return;
+  inCar=true; drivingCar=car;
+  carCtl.x=car.position.x; carCtl.z=car.position.z; carCtl.heading=car.rotation.y; carCtl.speed=0;
+  if(fpCharacter) fpCharacter.visible=false;
+  updateCarCollider();   // you're this car now → drop its obstacle (others stay solid)
+  updateDriveBtn();
+}
+function exitCar(){
+  if(!inCar) return;
+  inCar=false;
+  var h=carCtl.heading, fx=Math.cos(h), fz=-Math.sin(h), sx=-fz, sz=fx;   // step out to the driver side
+  fpPosition.set(carCtl.x+sx*2.4, FP_HEIGHT+0.5, carCtl.z+sz*2.4);
+  fpYaw=h;
+  if(fpCharacter) fpCharacter.visible=true;
+  drivingCar=null;
+  updateCarCollider();   // re-add the parked-car obstacle at its new resting spot
+  updateDriveBtn();
+}
+// Per-object collision radius (cached). Trees collide at the trunk; the pool as its footprint.
+function objCollRadius(o){
+  if(o._cr!=null) return o._cr;
+  var ty=o.type||'', r=0.6;
+  if(ty==='pool'){ var u=o.mesh.userData||{}, w=u.poolW||4, d=u.poolD||6; r=Math.hypot(w,d)/2*0.82; }
+  else if(ty==='fence') r=1.4;
+  else if(ty==='cypress'||ty==='deciduous'||ty==='eztree') r=0.6;
+  else r=0.5;
+  o._cr=r; return r;
+}
+// Push the car out of walls AND placed objects so it can't drive through anything.
+// Samples the car as a capsule (front/centre/rear) so its long body is covered, not just a point.
+function carCollide(x,z,dx,dz){
+  var nx=x+dx, nz=z+dz, R=0.95;
+  var h=carCtl.heading, fx=Math.cos(h), fz=-Math.sin(h);
+  var offs=[-1.7,0,1.7];   // sample points along the car length
+  for(var pass=0;pass<2;pass++){
+    for(var s=0;s<offs.length;s++){
+      var off=offs[s], px=nx+fx*off, pz=nz+fz*off;
+      // walls / perimeter / gate / villas (honours collider.active + Y range)
+      for(var i=0;i<wallColliders.length;i++){
+        var w=wallColliders[i]; if(!w.active) continue;
+        if(w.yLow!==undefined && (1.4<w.yLow || 0>w.yHigh)) continue;
+        var ex=w.bx-w.ax, ez=w.bz-w.az, L2=ex*ex+ez*ez||1e-6;
+        var t=((px-w.ax)*ex+(pz-w.az)*ez)/L2; t=Math.max(0,Math.min(1,t));
+        var cxp=w.ax+ex*t, czp=w.az+ez*t, ddx=px-cxp, ddz=pz-czp, d=Math.hypot(ddx,ddz);
+        if(d<R && d>1e-4){ var pu=R-d; nx+=ddx/d*pu; nz+=ddz/d*pu; px+=ddx/d*pu; pz+=ddz/d*pu; }
+      }
+      // placed objects (trees, pool, fences…) as circular obstacles; skip walkables/wanderers
+      if(typeof STATE!=='undefined' && STATE.objects3D) for(var oi=0;oi<STATE.objects3D.length;oi++){
+        var o=STATE.objects3D[oi]; if(!o||!o.mesh) continue; var ty=o.type||'';
+        if(ty==='human'||ty==='dog'||ty==='chicken'||ty==='pathway') continue;
+        var op=o.mesh.position, rad=objCollRadius(o);
+        var ox=px-op.x, oz=pz-op.z, od=Math.hypot(ox,oz), orr=R+rad;
+        if(od<orr && od>1e-4){ var p2=orr-od; nx+=ox/od*p2; nz+=oz/od*p2; px+=ox/od*p2; pz+=oz/od*p2; }
+      }
+    }
+  }
+  return {x:nx,z:nz};
+}
+function updateDrive(dt){
+  if(!drivingCar){ inCar=false; return; }
+  var throttle=((fpKeys.w||fpKeys.camU)?1:0)-((fpKeys.s||fpKeys.camD)?1:0);   // WASD or arrow keys
+  var steer=((fpKeys.a||fpKeys.camL)?1:0)-((fpKeys.d||fpKeys.camR)?1:0);
+  if(touchStickActive && (Math.abs(fpStickX)>0.05||Math.abs(fpStickY)>0.05)){ throttle=-fpStickY; steer=-fpStickX; }
+  var ACC=12, MAXF=15, MAXR=5, DRAG=4;
+  if(throttle>0) carCtl.speed += ACC*throttle*dt;
+  else if(throttle<0) carCtl.speed += (carCtl.speed>0 ? -20 : ACC*0.6*throttle)*dt;   // brake, then reverse
+  else { var s=carCtl.speed; carCtl.speed -= (s>=0?1:-1)*Math.min(Math.abs(s),DRAG*dt); }
+  if(carCtl.speed>MAXF)carCtl.speed=MAXF; if(carCtl.speed<-MAXR)carCtl.speed=-MAXR;
+  var sp=carCtl.speed;
+  carCtl.heading += steer * Math.min(Math.abs(sp),7) * 0.28 * dt * (sp>=0?1:-1);
+  var fx=Math.cos(carCtl.heading), fz=-Math.sin(carCtl.heading);
+  var slid=carCollide(carCtl.x, carCtl.z, fx*sp*dt, fz*sp*dt);
+  carCtl.x=slid.x; carCtl.z=slid.z;
+  drivingCar.position.set(carCtl.x,0,carCtl.z); drivingCar.rotation.y=carCtl.heading;
+  // chase camera behind the car
+  var desired=new THREE.Vector3(carCtl.x - fx*7.5, 3.2, carCtl.z - fz*7.5);
+  threeCamera.position.lerp(desired, Math.min(1,dt*3.5));
+  threeCamera.lookAt(carCtl.x, 1.1, carCtl.z);
+  updateDriveBtn();
 }
 
 function addLotOverlay3D(poly,color){
@@ -5514,6 +5792,7 @@ function buildVillas3D(){
   }
   if(typeof updateSolarTracking==='function') updateSolarTracking();   // aim freshly-built panels (fixed optimum or live tracking)
   updateAreaTable();   // keep the m² table in sync after any 3D rebuild (it shows in 3D too now)
+  if(typeof rebuildPerimeterColliders==='function') rebuildPerimeterColliders();   // villa rebuild wiped wallColliders → re-add the solid perimeter
 }
 
 // Re-aim every roof PV panel. Tracking ON → dual-axis "face the live sun" (computed from the parcel's
@@ -5942,6 +6221,111 @@ function loadFPCharacterGLTF(){
 // Begin loading immediately (so it's ready when FP mode entered)
 setTimeout(loadFPCharacterGLTF,200);
 
+// ═══════════════════════════════════════════════════════════════
+// TESLA MODEL 3 — parked car at the car gate.
+// Model: Sketchfab "Tesla Model 3" (CC BY-NC) via kelvinkoko/autonomous-driving-playground.
+// Body (low-res) + separate wheel, assembled with the config dialed in via car-lab.html.
+// ═══════════════════════════════════════════════════════════════
+var TESLA_LFS='https://media.githubusercontent.com/media/kelvinkoko/autonomous-driving-playground/master/src/Application/Assets/Models/';
+var TESLA_CFG={wheelbase:2.95,track:1.65,wheelY:0.31,wheelScale:1,asym:-0.08,lift:0.16};
+// The car's paint/chrome are metallic — without an environment to reflect they render black.
+// Build a small sky-coloured PMREM env once and apply it ONLY to the car materials (the rest
+// of the app's lighting is unchanged). Also tame mirror-black surfaces a touch.
+var _carEnvTex=null;
+function carEnvMap(){
+  if(_carEnvTex||!threeRenderer) return _carEnvTex;
+  try{
+    var pmrem=new THREE.PMREMGenerator(threeRenderer);
+    // Gradient environment: bright sky above, dark ground below → reflections have
+    // direction (light from the top) instead of a flat uniform white.
+    var es=new THREE.Scene(); es.background=new THREE.Color(0x9FB8D2);
+    var grd=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshBasicMaterial({color:0x39423C}));
+    grd.rotation.x=-Math.PI/2; grd.position.y=-3; es.add(grd);
+    _carEnvTex=pmrem.fromScene(es,0.04).texture;
+    pmrem.dispose();
+  }catch(e){ console.warn('car env build failed',e); }
+  return _carEnvTex;
+}
+function applyCarEnv(root){
+  var env=carEnvMap();
+  root.traverse(function(o){
+    if(!o.isMesh||!o.material) return;
+    (Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){
+      if(!m||!('envMap' in m)) return;
+      if(env){ m.envMap=env; m.envMapIntensity=0.55; }                  // gentle reflection
+      if('metalness' in m && m.metalness>0.55) m.metalness=0.55;        // let the sun do the shading
+      if('roughness' in m && m.roughness<0.35) m.roughness=0.35;        // softer, not mirror-white
+      m.needsUpdate=true;
+    });
+  });
+}
+var teslaTemplate=null, teslaLoading=false, parkedCars=[], drivingCar=null, vehicleGroup=null, inCar=false;
+function loadTeslaCar(){
+  if(teslaTemplate||teslaLoading) return;
+  if(typeof THREE.GLTFLoader==='undefined') return;
+  teslaLoading=true;
+  var ld=new THREE.GLTFLoader(), chassis=null, wheelProto=null, wheelAutoScale=1;
+  function assemble(){
+    if(teslaTemplate||!chassis||!wheelProto) return;
+    var tmpl=new THREE.Group();
+    // Body: normalise longest horizontal dim to 4.694 m, recentre, sit on ground (+ small lift)
+    var b0=new THREE.Box3().setFromObject(chassis), s0=new THREE.Vector3(); b0.getSize(s0);
+    chassis.scale.setScalar(4.694/Math.max(s0.x,s0.z,0.001));
+    var b=new THREE.Box3().setFromObject(chassis), sz=new THREE.Vector3(); b.getSize(sz); var c=new THREE.Vector3(); b.getCenter(c);
+    chassis.position.x-=c.x; chassis.position.z-=c.z; chassis.position.y=-b.min.y+TESLA_CFG.lift;
+    var fwdX=sz.x>=sz.z;   // car's length axis — local +X
+    // The model's nose points along -X; wrap body+wheels in an inner group rotated 180°
+    // so the whole car's forward is +X (matches driving + parking conventions).
+    var inner=new THREE.Group(); inner.rotation.y=Math.PI;
+    inner.add(chassis);
+    // 4 wheels at the corners
+    var combos=[[1,1],[1,-1],[-1,1],[-1,-1]];
+    for(var i=0;i<4;i++){
+      var fr=combos[i][0], lr=combos[i][1];
+      var along=fr*TESLA_CFG.wheelbase/2 + TESLA_CFG.asym, side=lr*TESLA_CFG.track/2;
+      var w=new THREE.Group(); w.add(wheelProto.clone(true));
+      w.scale.setScalar(wheelAutoScale*TESLA_CFG.wheelScale);
+      if(fwdX) w.position.set(along,TESLA_CFG.wheelY,side); else w.position.set(side,TESLA_CFG.wheelY,along);
+      w.rotation.y=(lr<0)?Math.PI:0;   // mirror the right-hand wheels
+      inner.add(w);
+    }
+    tmpl.add(inner);
+    tmpl.traverse(function(o){if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
+    applyCarEnv(tmpl);   // env reflections so the metallic paint/chrome isn't black
+    teslaTemplate=tmpl;
+    placeParkedCars();
+  }
+  ld.load(TESLA_LFS+'model3-chassis-low.glb', function(g){chassis=g.scene; assemble();}, undefined,
+    function(e){teslaLoading=false; console.warn('Tesla body load failed',e);});
+  ld.load(TESLA_LFS+'wheel.glb', function(g){
+    wheelProto=g.scene;
+    var b=new THREE.Box3().setFromObject(wheelProto), ctr=new THREE.Vector3(); b.getCenter(ctr); wheelProto.position.sub(ctr);
+    var wsz=new THREE.Vector3(); b.getSize(wsz); wheelAutoScale=0.67/Math.max(wsz.x,wsz.y,wsz.z,1e-4);
+    assemble();
+  }, undefined, function(e){teslaLoading=false; console.warn('Tesla wheel load failed',e);});
+}
+function addCar(wx,wz,rotY){
+  var car=teslaTemplate.clone(true);
+  car.position.set(wx,0,wz); car.rotation.y=rotY;
+  vehicleGroup.add(car); parkedCars.push(car);
+}
+// Default parked-car positions — placed by hand in-app and exported (world x,z + Y-rotation).
+var CAR_POSITIONS=[
+  {x:2.34, z:-27.21, rot:5.3466}, {x:0.20, z:-25.77, rot:5.3819},
+  {x:23.99,z:-41.15, rot:5.0913}, {x:21.33,z:-39.78, rot:5.1424},
+  {x:13.25,z:-35.13, rot:5.3229}, {x:11.11,z:-33.65, rot:5.3149}
+];
+function placeParkedCars(){
+  if(!teslaTemplate||!threeScene) return;
+  if(!vehicleGroup){ vehicleGroup=new THREE.Group(); threeScene.add(vehicleGroup); }
+  if(inCar) return;                                 // don't reshuffle while you're driving
+  for(var i=parkedCars.length-1;i>=0;i--) vehicleGroup.remove(parkedCars[i]);
+  parkedCars.length=0;
+  for(var i=0;i<CAR_POSITIONS.length;i++){ var p=CAR_POSITIONS[i]; addCar(p.x, p.z, p.rot); }
+  if(typeof updateCarCollider==='function') updateCarCollider();
+}
+setTimeout(loadTeslaCar,400);
+
 function setCharacterAction(name){
   if(!fpGLTFMixer||!fpGLTFActions[name])return;
   if(fpGLTFCurrent===name) return;
@@ -6122,6 +6506,8 @@ function enterFPMode(useThirdPerson){
 
 function exitFPMode(){
   if(!fpMode)return;
+  if(inCar){ inCar=false; if(fpCharacter) fpCharacter.visible=true; }   // leave the car cleanly
+  if(driveBtn) driveBtn.style.display='none';
   fpMode=false;
   if(fpSavedCamPos)threeCamera.position.copy(fpSavedCamPos);
   if(fpSavedCamRot){threeCamera.rotation.order=fpSavedCamRot.order;threeCamera.rotation.set(fpSavedCamRot.x,fpSavedCamRot.y,fpSavedCamRot.z)}
@@ -6236,9 +6622,10 @@ document.addEventListener('keydown',function(e){
   else if(k==='arrowright'){fpKeys.camR=1;e.preventDefault()}
   else if(k==='arrowup'){fpKeys.camU=1;e.preventDefault()}
   else if(k==='arrowdown'){fpKeys.camD=1;e.preventDefault()}
-  else if(k==='escape'){exitFPMode()}
-  else if(k==='e'){tryInteractDoor()}
-  else if(k==='p'){tryTogglePanjur()}
+  else if(k==='escape'){ if(inCar) exitCar(); else exitFPMode(); }
+  else if(k==='g'){ toggleCar(); }
+  else if(k==='e'){ if(!inCar) tryInteractDoor(); }
+  else if(k==='p'){ if(!inCar) tryTogglePanjur(); }
 });
 document.addEventListener('keyup',function(e){
   if(!fpMode)return;
@@ -6557,6 +6944,7 @@ function updateFP(dt){
   }
   // Update prompt UI
   updateFPPrompt();
+  updateDriveBtn();   // show the "Sür" button when standing next to the car
 }
 
 function animateThree(){
@@ -6566,7 +6954,7 @@ function animateThree(){
   var dt=fpLastTime?Math.min(0.1,(now-fpLastTime)/1000):0.016;
   fpLastTime=now;
   if(fpMode){
-    updateFP(dt);
+    if(inCar) updateDrive(dt); else updateFP(dt);
   }else{
     if(keyPan.l||keyPan.r||keyPan.u||keyPan.d){
       var fwd=new THREE.Vector3();threeCamera.getWorldDirection(fwd);fwd.y=0;fwd.normalize();
@@ -6597,6 +6985,7 @@ function animateThree(){
     if(po.type==='pool'&&po.mesh&&po.mesh.userData.waterMat){
       po.mesh.userData.waterMat.uniforms.uTime.value=grassTime;
       po.mesh.userData.floorMat.uniforms.uTime.value=grassTime;}}
+  updateGates(dt);   // pedestrian gate auto-open/close
   threeRenderer.render(threeScene,threeCamera);
 }
 
