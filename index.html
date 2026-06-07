@@ -470,7 +470,7 @@ svg text{font-family:'DM Sans',sans-serif;user-select:none}
       <span id="f3TerraceVal">0%</span>
     </div>
     <button class="tb-room" id="f3SolarTerBtn" title="Terası optimum açılı güneş paneli yüzeyiyle kapat" style="display:none">☀ Solar Teras</button>
-    <button class="tb-room" id="roofDenseBtn" title="Çatı panelleri: sık dizilim (çatıya hizalı, düşük eğim) — daha çok panel, daha düzgün görünüm">▦ Sık Panel</button>
+    <button class="tb-room active" id="roofDenseBtn" title="Çatı panelleri: sık dizilim (çatıya hizalı, düşük eğim) — daha çok panel, daha düzgün görünüm">▦ Sık Panel</button>
     <div class="tb-actions">
       <div class="tb-toggle" id="planSizeToggle" title="Villa boyutu (A & B)">
         <button data-psize="70" class="active">70 m²</button>
@@ -6713,7 +6713,7 @@ STATE.villaStyleF2='woodwide';  // Kaba Ahsap
 STATE.villaStyleRoof='beton';
 STATE.roofGreen=true;   // green roof on the villa terrace: real blade grass + a few çalı (EZ-tree bushes)
 STATE.roofSolar=true;   // tilted PV rows on the green roof (biosolar)
-STATE.roofSolarDense=false; // false → optimal tilted-south spaced rows; true → dense roof-aligned low-tilt grid
+STATE.roofSolarDense=true; // true (default) → dense roof-aligned low-tilt grid; false → optimal tilted-south spaced rows
 STATE.solarTrack=false; // false → panels parked at the annual-optimum south tilt; true → track the live sun
 STATE.tileAlignment='world'; // 'villa' = aligned with building walls; 'world' = world-axis (angled)
 STATE.fenceWallStyle='koyu'; // outer land boundary fence wall color (GLOBAL — land boundary, not per villa)
